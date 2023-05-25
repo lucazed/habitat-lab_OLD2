@@ -54,6 +54,7 @@ class VLNDatasetV1(Dataset):
     def from_json(
         self, json_str: str, scenes_dir: Optional[str] = None
     ) -> None:
+
         deserialized = json.loads(json_str)
         self.instruction_vocab = VocabDict(
             word_list=deserialized["instruction_vocab"]["word_list"]

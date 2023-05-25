@@ -98,6 +98,7 @@ class EQACNNPretrainDataset(Dataset):
         """
 
         for pos in pos_queue:
+
             observation = self.env.sim.get_observations_at(
                 pos.position, pos.rotation
             )

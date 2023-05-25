@@ -39,8 +39,9 @@ Configuration for training the VQA (answering) model can be found in `habitat_ba
 ### Train:
 
 ```
-python -u -m habitat_baselines.run \
-  --config-name=eqa/il_eqa_cnn_pretrain.yaml
+python -u habitat_baselines/run.py \
+  --exp-config habitat_baselines/config/eqa/il_eqa_cnn_pretrain.yaml \
+  --run-type train
 ```
 
 Training checkpoints are by default stored in `data/eqa/eqa_cnn_pretrain/checkpoints`.
@@ -48,9 +49,9 @@ Training checkpoints are by default stored in `data/eqa/eqa_cnn_pretrain/checkpo
 ### Eval:
 
 ```
-python -u -m habitat_baselines.run \
-  --config-name=eqa/il_eqa_cnn_pretrain.yaml \
-  habitat_baselines.evaluate=True
+python -u habitat_baselines/run.py \
+  --exp-config habitat_baselines/config/eqa/il_eqa_cnn_pretrain.yaml \
+  --run-type eval
 ```
 
 Results from evaluation are stored in `data/eqa/eqa_cnn_pretrain/results/val`.
@@ -84,8 +85,9 @@ The VQA trainer picks the EQA CNN pre-trained encoder checkpoint by default from
 ### Train:
 
 ```
-python -u -m habitat_baselines.run \
-  --config-name=eqa/il_vqa.yaml
+python -u habitat_baselines/run.py \
+  --exp-config habitat_baselines/config/eqa/il_vqa.yaml \
+  --run-type train
 ```
 
 Training checkpoints are by default stored in `data/eqa/vqa/checkpoints`.
@@ -99,9 +101,9 @@ After downloading the pre-trained model, add its path to the config file's `eval
 ### Eval:
 
 ```
-python -u -m habitat_baselines.run \
-  --config-name=/eqa/il_vqa.yaml \
-  habitat_baselines.evaluate=True
+python -u habitat_baselines/run.py \
+  --exp-config habitat_baselines/config/eqa/il_vqa.yaml \
+  --run-type eval
 ```
 
 Results from evaluation are stored in `data/eqa/vqa/results/val`.
@@ -128,8 +130,9 @@ The trainer also picks the EQA CNN pre-trained encoder checkpoint by default fro
 ### Train:
 
 ```
-python -u -m habitat_baselines.run \
-  --config-name=eqa/il_pacman_nav.yaml
+python -u habitat_baselines/run.py \
+  --exp-config habitat_baselines/config/eqa/il_pacman_nav.yaml \
+  --run-type train
 ```
 
 Training checkpoints are by default stored in `data/eqa/nav/checkpoints`.
@@ -138,9 +141,9 @@ Training checkpoints are by default stored in `data/eqa/nav/checkpoints`.
 ### Eval:
 
 ```
-python -u -m habitat_baselines.run \
-  --config-name=eqa/il_pacman_nav.yaml \
-  habitat_baselines.evaluate=True
+python -u habitat_baselines/run.py \
+  --exp-config habitat_baselines/config/eqa/il_pacman_nav.yaml \
+  --run-type eval
 ```
 
 Results from evaluation are stored in `data/eqa/nav/results/val`.

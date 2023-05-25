@@ -4,32 +4,33 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import gc
+import itertools
 import json
+import os
 import os.path as osp
 import time
 from glob import glob
 
-import magnum as mn
-import numpy as np
 import pytest
+import torch
 import yaml
 from omegaconf import DictConfig, OmegaConf
 
 import habitat
 import habitat.datasets.rearrange.run_episode_generator as rr_gen
-import habitat.datasets.rearrange.samplers.receptacle as hab_receptacle
 import habitat.tasks.rearrange.rearrange_sim
 import habitat.tasks.rearrange.rearrange_task
 import habitat.utils.env_utils
-import habitat_sim
 from habitat.config.default import _HABITAT_CFG_DIR, get_config
 from habitat.core.embodied_task import Episode
 from habitat.core.environments import get_env_class
 from habitat.core.logging import logger
 from habitat.datasets.rearrange.rearrange_dataset import RearrangeDatasetV0
 from habitat.tasks.rearrange.multi_task.composite_task import CompositeTask
-from habitat.utils.geometry_utils import is_point_in_triangle
 from habitat_baselines.config.default import get_config as baselines_get_config
+from habitat_baselines.rl.ddppo.ddp_utils import find_free_port
+from habitat_baselines.run import run_exp
 
 CFG_TEST = "benchmark/rearrange/pick.yaml"
 GEN_TEST_CFG = (
@@ -86,21 +87,7 @@ def test_rearrange_baseline_envs(test_cfg_path):
     """
     Test the Habitat Baseline environments
     """
-    config = baselines_get_config(
-        test_cfg_path,
-        [
-            "habitat.dataset.split=val",
-            "habitat_baselines.eval.split=val",
-        ],
-    )
-    for _, agent_config in config.habitat.simulator.agents.items():
-        if (
-            agent_config.articulated_agent_type == "KinematicHumanoid"
-            and not osp.exists(agent_config.motion_data_path)
-        ):
-            pytest.skip(
-                "This test should only be run if we have the motion data files."
-            )
+    config = baselines_get_config(test_cfg_path)
     with habitat.config.read_write(config):
         config.habitat.gym.obs_keys = None
         config.habitat.gym.desired_goal_keys = []
@@ -128,6 +115,33 @@ def test_rearrange_baseline_envs(test_cfg_path):
         glob("habitat-lab/habitat/config/benchmark/rearrange/*"),
     ),
 )
+def test_rearrange_tasks(test_cfg_path):
+    """
+    Test the underlying Habitat Tasks
+    """
+    if not osp.isfile(test_cfg_path):
+        return
+
+    config = get_config(test_cfg_path)
+    if (
+        config.habitat.dataset.data_path
+        == "data/ep_datasets/bench_scene.json.gz"
+    ):
+        pytest.skip(
+            "This config is only useful for examples and does not have the generated dataset"
+        )
+
+    with habitat.Env(config=config) as env:
+        for _ in range(5):
+            env.reset()
+
+
+@pytest.mark.parametrize(
+    "test_cfg_path",
+    list(
+        glob("habitat-lab/habitat/config/benchmark/rearrange/*"),
+    ),
+)
 def test_composite_tasks(test_cfg_path):
     """
     Test for the Habitat composite tasks.
@@ -136,11 +150,7 @@ def test_composite_tasks(test_cfg_path):
         return
 
     config = get_config(
-        test_cfg_path,
-        [
-            "habitat.simulator.concur_render=False",
-            "habitat.dataset.split=val",
-        ],
+        test_cfg_path, ["habitat.simulator.concur_render=False"]
     )
     if "task_spec" not in config.habitat.task:
         return
@@ -201,179 +211,30 @@ def test_rearrange_episode_generator(
     )
 
 
-@pytest.mark.skipif(
-    not osp.exists("data/test_assets/"),
-    reason="This test requires habitat-sim test assets.",
+@pytest.mark.parametrize(
+    "test_cfg_path,mode",
+    list(
+        itertools.product(
+            glob("habitat-baselines/habitat_baselines/config/tp_srl_test/*"),
+            ["eval"],
+        )
+    ),
 )
-def test_receptacle_parsing():
-    # 1. Load the parameterized scene
-    sim_settings = habitat_sim.utils.settings.default_sim_settings.copy()
-    sim_settings[
-        "scene"
-    ] = "data/test_assets/scenes/simple_room.stage_config.json"
-    sim_settings["sensor_height"] = 0
-    sim_settings["enable_physics"] = True
-    cfg = habitat_sim.utils.settings.make_cfg(sim_settings)
-    with habitat_sim.Simulator(cfg) as sim:
-        # load test assets
-        sim.metadata_mediator.object_template_manager.load_configs(
-            "data/test_assets/objects/chair.object_config.json"
-        )
-        # TODO: add an AO w/ receptacles also
+def test_tp_srl(test_cfg_path, mode):
+    # For testing with world_size=1
+    os.environ["MAIN_PORT"] = str(find_free_port())
 
-        # test quick receptacle listing:
-        list_receptacles = hab_receptacle.get_all_scenedataset_receptacles(sim)
-        print(f"list_receptacles = {list_receptacles}")
-        # receptacles from stage configs:
-        assert (
-            "receptacle_aabb_simpleroom_test"
-            in list_receptacles["stage"][
-                "data/test_assets/scenes/simple_room.stage_config.json"
-            ]
-        )
-        assert (
-            "receptacle_mesh_simpleroom_test"
-            in list_receptacles["stage"][
-                "data/test_assets/scenes/simple_room.stage_config.json"
-            ]
-        )
-        # receptacles from rigid object configs:
-        assert (
-            "receptacle_aabb_chair_test"
-            in list_receptacles["rigid"][
-                "data/test_assets/objects/chair.object_config.json"
-            ]
-        )
-        assert (
-            "receptacle_mesh_chair_test"
-            in list_receptacles["rigid"][
-                "data/test_assets/objects/chair.object_config.json"
-            ]
-        )
-        # TODO: receptacles from articulated object configs:
-        # assert "" in list_receptacles["articulated"]
+    run_exp(
+        test_cfg_path.replace(
+            "habitat-baselines/habitat_baselines/config/", ""
+        ),
+        mode,
+        ["habitat_baselines.eval.split=train"],
+    )
 
-        # add the chair to the scene
-        chair_template_handle = (
-            sim.metadata_mediator.object_template_manager.get_template_handles(
-                "chair"
-            )[0]
-        )
-        chair_obj = (
-            sim.get_rigid_object_manager().add_object_by_template_handle(
-                chair_template_handle
-            )
-        )
+    # Needed to destroy the trainer
+    gc.collect()
 
-        def randomize_obj_state():
-            chair_obj.translation = np.random.random(3)
-            chair_obj.rotation = habitat_sim.utils.common.random_quaternion()
-            # TODO: also randomize AO state here
-
-        # parse the metadata into Receptacle objects
-        test_receptacles = hab_receptacle.find_receptacles(sim)
-
-        # test the Receptacle instances
-        num_test_samples = 10
-        for receptacle in test_receptacles:
-            # check for contents and correct type parsing
-            if receptacle.name == "receptacle_aabb_chair_test":
-                assert type(receptacle) is hab_receptacle.AABBReceptacle
-            elif receptacle.name == "receptacle_mesh_chair_test.0000":
-                assert (
-                    type(receptacle) is hab_receptacle.TriangleMeshReceptacle
-                )
-            elif receptacle.name == "receptacle_aabb_simpleroom_test":
-                assert type(receptacle) is hab_receptacle.AABBReceptacle
-            elif receptacle.name == "receptacle_mesh_simpleroom_test.0000":
-                assert (
-                    type(receptacle) is hab_receptacle.TriangleMeshReceptacle
-                )
-            else:
-                # TODO: add AO receptacles
-                raise AssertionError(
-                    f"Unknown Receptacle '{receptacle.name}' detected. Update unit test golden values if this is expected."
-                )
-
-            for _six in range(num_test_samples):
-                randomize_obj_state()
-                # check that parenting and global transforms are as expected:
-                parent_object = None
-                expected_global_transform = mn.Matrix4.identity_init()
-                global_transform = receptacle.get_global_transform(sim)
-                if receptacle.parent_object_handle is not None:
-                    parent_object = None
-                    if receptacle.parent_link is not None:
-                        # articulated object
-                        assert receptacle.is_parent_object_articulated
-                        parent_object = sim.get_articulated_object_manager().get_object_by_handle(
-                            receptacle.parent_object_handle
-                        )
-                        expected_global_transform = (
-                            parent_object.get_link_scene_node(
-                                receptacle.parent_link
-                            ).absolute_transformation()
-                        )
-                    else:
-                        # rigid object
-                        assert not receptacle.is_parent_object_articulated
-                        parent_object = sim.get_rigid_object_manager().get_object_by_handle(
-                            receptacle.parent_object_handle
-                        )
-                        # NOTE: we use absolute transformation from the 2nd visual node (scaling node) and root of all render assets to correctly account for any COM shifting, re-orienting, or scaling which has been applied.
-                        expected_global_transform = (
-                            parent_object.visual_scene_nodes[
-                                1
-                            ].absolute_transformation()
-                        )
-                    assert parent_object is not None
-                    assert np.allclose(
-                        global_transform, expected_global_transform, atol=1e-06
-                    )
-                else:
-                    # this is a stage Receptacle (global transform)
-                    if type(receptacle) is not hab_receptacle.AABBReceptacle:
-                        assert np.allclose(
-                            global_transform,
-                            expected_global_transform,
-                            atol=1e-06,
-                        )
-                    else:
-                        # NOTE: global AABB Receptacles have special handling here which is not explicitly tested. See AABBReceptacle.get_global_transform()
-                        expected_global_transform = global_transform
-
-                for _six2 in range(num_test_samples):
-                    sample_point = receptacle.sample_uniform_global(
-                        sim, sample_region_scale=1.0
-                    )
-                    expected_local_sample_point = (
-                        expected_global_transform.inverted().transform_point(
-                            sample_point
-                        )
-                    )
-                    if type(receptacle) is hab_receptacle.AABBReceptacle:
-                        # check that the world->local sample point is contained in the local AABB
-                        assert receptacle.bounds.contains(
-                            expected_local_sample_point
-                        )
-                    elif (
-                        type(receptacle)
-                        is hab_receptacle.TriangleMeshReceptacle
-                    ):
-                        # check that the local point is within a mesh triangle
-                        in_mesh = False
-                        for f_ix in range(
-                            int(len(receptacle.mesh_data.indices) / 3)
-                        ):
-                            verts = receptacle.get_face_verts(f_ix)
-                            if is_point_in_triangle(
-                                expected_local_sample_point,
-                                verts[0],
-                                verts[1],
-                                verts[2],
-                            ):
-                                in_mesh = True
-                                break
-                        assert (
-                            in_mesh
-                        ), "The point must belong to a triangle of the local mesh to be valid."
+    # Deinit processes group
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()

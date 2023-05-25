@@ -75,15 +75,13 @@ import numpy as np
 from hydra.core.config_store import ConfigStore
 
 import habitat
-import habitat.gym
+import habitat.utils.gym_definitions
 from habitat.core.embodied_task import Measure
 from habitat.core.registry import registry
 from habitat.tasks.rearrange.rearrange_sensors import RearrangeReward
 from habitat.tasks.rearrange.rearrange_task import RearrangeTask
-from habitat.utils.visualizations.utils import (
-    observations_to_image,
-    overlay_frame,
-)
+from habitat.utils.render_wrapper import overlay_frame
+from habitat.utils.visualizations.utils import observations_to_image
 from habitat_sim.utils import viz_utils as vut
 
 # Quiet the Habitat simulator logging
@@ -189,7 +187,6 @@ if vut.is_notebook():
 # For other examples of task, sensor, and measurement definitions, [see here
 # for existing tasks](https://github.com/facebookresearch/habitat-lab/tree/main/habitat-lab/habitat/tasks/rearrange/sub_tasks). Tasks, sensors, and measurements are connected through a config file that defines the task.
 
-
 # %%
 @registry.register_task(name="RearrangeDemoNavPickTask-v0")
 class NavPickTaskV1(RearrangeTask):
@@ -203,7 +200,7 @@ class NavPickTaskV1(RearrangeTask):
             0, self._sim.get_n_targets()
         )
         start_pos = self._sim.pathfinder.get_random_navigable_point()
-        self._sim.articulated_agent.base_pos = start_pos
+        self._sim.robot.base_pos = start_pos
 
         # Put any reset logic here.
         return super().reset(episode)
@@ -230,7 +227,7 @@ class DistanceToTargetObject(Measure):
         self.update_metric(*args, episode=episode, **kwargs)
 
     def update_metric(self, *args, task, episode, **kwargs):
-        ee_pos = self._sim.articulated_agent.ee_transform().translation
+        ee_pos = self._sim.robot.ee_transform.translation
 
         idxs, _ = self._sim.get_targets()
         scene_pos = self._sim.get_scene_pos()[idxs[task.target_object_index]]
@@ -376,7 +373,7 @@ defaults:
     - arm_action
     - base_velocity
   - /habitat/task/measurements:
-    - articulated_agent_force
+    - robot_force
     - force_terminate
     - distance_to_target_object
     - nav_pick_reward
@@ -396,7 +393,7 @@ habitat:
     measurements:
       distance_to_target_object:
         type: "DistanceToTargetObject"
-      articulated_agent_force:
+      robot_force:
         type: "RobotForce"
         min_force: 20.0
       force_terminate:
@@ -435,6 +432,7 @@ habitat:
     additional_object_paths:
       - "data/objects/ycb/configs/"
     debug_render: False
+    action_space_config: v0
     concur_render: False
     auto_sleep: False
     agents:
@@ -448,13 +446,14 @@ habitat:
             width: 128
         start_position: [0, 0, 0]
         start_rotation: [0, 0, 0, 1]
-        articulated_agent_urdf: ./data/robots/hab_fetch/robots/hab_fetch.urdf
-        articulated_agent_type: "FetchRobot"
+        robot_urdf: ./data/robots/hab_fetch/robots/hab_fetch.urdf
+        robot_type: "FetchRobot"
 
     # Agent setup
     # ARM_REST: [0.6, 0.0, 0.9]
     ctrl_freq: 120.0
     ac_freq_ratio: 4
+    forward_step_size: 0.25
 
     # Grasping
     hold_thresh: 0.09

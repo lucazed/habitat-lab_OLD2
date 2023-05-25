@@ -39,10 +39,6 @@ class LogicalExpr:
         self._quantifier = quantifier
 
     @property
-    def expr_type(self):
-        return self._expr_type
-
-    @property
     def inputs(self):
         return self._inputs
 
@@ -85,13 +81,10 @@ class LogicalExpr:
             init_value = False
         else:
             raise ValueError()
-        self.prev_truth_vals = [
-            is_true_fn(sub_expr) for sub_expr in self._sub_exprs
-        ]
 
         ret = reduce(
             reduce_op,
-            self.prev_truth_vals,
+            (is_true_fn(sub_expr) for sub_expr in self._sub_exprs),
             init_value,
         )
         if (

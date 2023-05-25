@@ -12,8 +12,7 @@ def find_action_range(
     action_space: ActionSpace, search_key: str
 ) -> Tuple[int, int]:
     """
-    Returns the start and end indices of an action key in the action tensor. If
-    the key is not found, a Value error will be thrown.
+    Returns the start and end indices of an action key in the action tensor.
     """
 
     start_idx = 0

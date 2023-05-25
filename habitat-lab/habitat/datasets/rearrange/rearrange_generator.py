@@ -5,8 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import os.path as osp
-import random
-import time
 from collections import defaultdict
 
 try:
@@ -28,7 +26,6 @@ from habitat.core.logging import logger
 from habitat.datasets.rearrange.rearrange_dataset import RearrangeEpisode
 from habitat.datasets.rearrange.samplers.receptacle import (
     OnTopOfReceptacle,
-    Receptacle,
     ReceptacleSet,
     ReceptacleTracker,
     find_receptacles,
@@ -394,19 +391,29 @@ class RearrangeEpisodeGenerator:
 
     def visualize_scene_receptacles(self) -> None:
         """
-        Generate a debug line representation for each receptacle in the scene, aim the camera at it and record 1 observation.
+        Generate a wireframe bounding box for each receptacle in the scene, aim the camera at it and record 1 observation.
         """
         logger.info("visualize_scene_receptacles processing")
         receptacles = find_receptacles(self.sim)
         for receptacle in receptacles:
             logger.info("receptacle processing")
-            receptacle.debug_draw(self.sim)
-            # Receptacle does not have a position cached relative to the object it is attached to, so sample a position from it instead
-            sampled_look_target = receptacle.sample_uniform_global(
-                self.sim, 1.0
-            )
-            self.vdb.look_at(sampled_look_target)
-            self.vdb.get_observation()
+            viz_objects = receptacle.add_receptacle_visualization(self.sim)
+
+            # sample points in the receptacles to display
+            # for sample in range(25):
+            #     sample_point = receptacle.sample_uniform_global(self.sim, 1.0)
+            #     sutils.add_viz_sphere(self.sim, 0.025, sample_point)
+
+            if viz_objects:
+                # point the camera at the 1st viz_object for the Receptacle
+                self.vdb.look_at(
+                    viz_objects[0].root_scene_node.absolute_translation
+                )
+                self.vdb.get_observation()
+            else:
+                logger.warning(
+                    f"visualize_scene_receptacles: no visualization object generated for Receptacle '{receptacle.name}'."
+                )
 
     def generate_episodes(
         self, num_episodes: int = 1, verbose: bool = False
@@ -442,7 +449,7 @@ class RearrangeEpisodeGenerator:
 
         # Reset the number of allowed objects per receptacle.
         recep_tracker = ReceptacleTracker(
-            dict(self.cfg.max_objects_per_receptacle),
+            {k: v for k, v in self.cfg.max_objects_per_receptacle},
             self._receptacle_sets,
         )
 
@@ -455,63 +462,43 @@ class RearrangeEpisodeGenerator:
         ep_scene_handle = self.generate_scene()
         scene_base_dir = osp.dirname(osp.dirname(ep_scene_handle))
 
-        recep_tracker.init_scene_filters(
-            mm=self.sim.metadata_mediator, scene_handle=ep_scene_handle
-        )
-
         scene_name = ep_scene_handle.split(".")[0]
         navmesh_path = osp.join(
             scene_base_dir, "navmeshes", scene_name + ".navmesh"
         )
         self.sim.pathfinder.load_nav_mesh(navmesh_path)
 
-        # prepare target samplers
         self._get_object_target_samplers()
-        target_numbers: Dict[str, int] = {
+        target_numbers = {
             k: sampler.target_objects_number
             for k, sampler in self._target_samplers.items()
         }
-        # prepare mapping of target samplers to their source object samplers
-        targ_sampler_name_to_obj_sampler_names: Dict[str, List[str]] = {}
+        targ_sampler_name_to_obj_sampler_names = {}
         for targ_sampler_cfg in self.cfg.object_target_samplers:
             sampler_name = targ_sampler_cfg["name"]
             targ_sampler_name_to_obj_sampler_names[
                 sampler_name
             ] = targ_sampler_cfg["params"]["object_samplers"]
 
-        # sample and allocate receptacles to contain the target objects
         target_receptacles = defaultdict(list)
         all_target_receptacles = []
         for sampler_name, num_targets in target_numbers.items():
-            new_target_receptacles: List[Receptacle] = []
-            failed_samplers: Dict[str, bool] = defaultdict(bool)
-            while len(new_target_receptacles) < num_targets:
-                assert len(failed_samplers.keys()) < len(
-                    targ_sampler_name_to_obj_sampler_names[sampler_name]
-                ), f"All target samplers failed to find a match for '{sampler_name}'."
-                obj_sampler_name = random.choice(
-                    targ_sampler_name_to_obj_sampler_names[sampler_name]
+            obj_sampler_name = targ_sampler_name_to_obj_sampler_names[
+                sampler_name
+            ][0]
+            sampler = self._obj_samplers[obj_sampler_name]
+            new_target_receptacles = []
+            for _ in range(num_targets):
+                new_receptacle = sampler.sample_receptacle(
+                    self.sim, recep_tracker
                 )
-                sampler = self._obj_samplers[obj_sampler_name]
-                new_receptacle = None
-                try:
-                    new_receptacle = sampler.sample_receptacle(
-                        self.sim, recep_tracker
-                    )
-                except AssertionError:
-                    # No receptacle instances found matching this sampler's requirements, likely ran out of allocations and a different sampler should be tried
-                    failed_samplers[obj_sampler_name]
-                    continue
-
-                if recep_tracker.allocate_one_placement(new_receptacle):
-                    # used up new_receptacle, need to recompute the sampler's receptacle_candidates
+                if recep_tracker.update_receptacle_tracking(new_receptacle):
                     sampler.receptacle_candidates = None
                 new_target_receptacles.append(new_receptacle)
 
             target_receptacles[obj_sampler_name].extend(new_target_receptacles)
             all_target_receptacles.extend(new_target_receptacles)
 
-        # sample and allocate receptacles to contain the goal states for target objects
         goal_receptacles = {}
         all_goal_receptacles = []
         for sampler, (sampler_name, num_targets) in zip(
@@ -525,8 +512,7 @@ class RearrangeEpisodeGenerator:
                 )
                 if isinstance(new_receptacle, OnTopOfReceptacle):
                     new_receptacle.set_episode_data(self.episode_data)
-                if recep_tracker.allocate_one_placement(new_receptacle):
-                    # used up new_receptacle, need to recompute the sampler's receptacle_candidates
+                if recep_tracker.update_receptacle_tracking(new_receptacle):
                     sampler.receptacle_candidates = None
 
                 new_goal_receptacles.append(new_receptacle)
@@ -534,9 +520,8 @@ class RearrangeEpisodeGenerator:
             goal_receptacles[sampler_name] = new_goal_receptacles
             all_goal_receptacles.extend(new_goal_receptacles)
 
-        # Goal and target containing receptacles are allowed 1 extra maximum object for each goal/target if a limit was defined
         for recep in [*all_goal_receptacles, *all_target_receptacles]:
-            recep_tracker.inc_count(recep.unique_name)
+            recep_tracker.inc_count(recep.name)
 
         # sample AO states for objects in the scene
         # ao_instance_handle -> [ (link_ix, state), ... ]
@@ -559,10 +544,8 @@ class RearrangeEpisodeGenerator:
             self.visualize_scene_receptacles()
             self.vdb.make_debug_video(prefix="receptacles_")
 
-        # track a list of target objects to be used for settle culling later
-        target_object_names: List[str] = []
         # sample object placements
-        self.object_to_containing_receptacle: Dict[str, Receptacle] = {}
+        object_to_containing_receptacle = {}
         for sampler_name, obj_sampler in self._obj_samplers.items():
             object_sample_data = obj_sampler.sample(
                 self.sim,
@@ -574,17 +557,8 @@ class RearrangeEpisodeGenerator:
             if len(object_sample_data) == 0:
                 return None
             new_objects, receptacles = zip(*object_sample_data)
-            # collect names of all newly placed target objects
-            target_object_names.extend(
-                [
-                    obj.handle
-                    for obj in new_objects[
-                        : len(target_receptacles[sampler_name])
-                    ]
-                ]
-            )
             for obj, rec in zip(new_objects, receptacles):
-                self.object_to_containing_receptacle[obj.handle] = rec
+                object_to_containing_receptacle[obj.handle] = rec
             if sampler_name not in self.episode_data["sampled_objects"]:
                 self.episode_data["sampled_objects"][
                     sampler_name
@@ -600,18 +574,12 @@ class RearrangeEpisodeGenerator:
             )
             # debug visualization showing each newly added object
             if self._render_debug_obs:
-                logger.debug(
-                    f"Generating debug images for {len(new_objects)} objects..."
-                )
                 for new_object in new_objects:
                     self.vdb.look_at(new_object.translation)
                     self.vdb.get_observation()
-                logger.debug(
-                    f"... done generating the debug images for {len(new_objects)} objects."
-                )
 
         # simulate the world for a few seconds to validate the placements
-        if not self.settle_sim(target_object_names):
+        if not self.settle_sim():
             logger.warning(
                 "Aborting episode generation due to unstable state."
             )
@@ -632,7 +600,7 @@ class RearrangeEpisodeGenerator:
 
         target_refs: Dict[str, str] = {}
 
-        # sample goal positions for target objects after all other clutter is placed and validated
+        # sample targets
         handle_to_obj = {obj.handle: obj for obj in self.ep_sampled_objects}
         for sampler_name, target_sampler in self._target_samplers.items():
             obj_sampler_name = targ_sampler_name_to_obj_sampler_names[
@@ -645,7 +613,7 @@ class RearrangeEpisodeGenerator:
                 vdb=self.vdb,
                 target_receptacles=target_receptacles[obj_sampler_name],
                 goal_receptacles=goal_receptacles[sampler_name],
-                object_to_containing_receptacle=self.object_to_containing_receptacle,
+                object_to_containing_receptacle=object_to_containing_receptacle,
             )
             if new_target_objects is None:
                 return None
@@ -726,8 +694,7 @@ class RearrangeEpisodeGenerator:
         ]
 
         name_to_receptacle = {
-            k: v.unique_name
-            for k, v in self.object_to_containing_receptacle.items()
+            k: v.name for k, v in object_to_containing_receptacle.items()
         }
 
         return RearrangeEpisode(
@@ -820,18 +787,12 @@ class RearrangeEpisodeGenerator:
         self.sim.agents[0].scene_node.translation = scene_bb.center()
 
         # initialize the debug visualizer
-        output_path = (
-            "rearrange_ep_gen_output/"
-            if self.vdb is None
-            else self.vdb.output_path
+        self.vdb = DebugVisualizer(
+            self.sim, output_path="rearrange_ep_gen_output/"
         )
-        self.vdb = DebugVisualizer(self.sim, output_path=output_path)
 
     def settle_sim(
-        self,
-        target_object_names: List[str],
-        duration: float = 5.0,
-        make_video: bool = True,
+        self, duration: float = 5.0, make_video: bool = True
     ) -> bool:
         """
         Run dynamics for a few seconds to check for stability of newly placed objects and optionally produce a video.
@@ -839,9 +800,7 @@ class RearrangeEpisodeGenerator:
         """
         if len(self.ep_sampled_objects) == 0:
             return True
-
-        settle_start_time = time.time()
-        logger.info("Running placement stability analysis...")
+        # assert len(self.ep_sampled_objects) > 0
 
         scene_bb = (
             self.sim.get_active_scene_graph().get_root_node().cumulative_bb
@@ -865,16 +824,11 @@ class RearrangeEpisodeGenerator:
             if self._render_debug_obs:
                 self.vdb.get_observation(obs_cache=settle_db_obs)
 
-        logger.info(
-            f"   ...done with placement stability analysis in {time.time()-settle_start_time} seconds."
-        )
         # check stability of placements
-        logger.info(
-            "Computing placement stability report:\n----------------------------------------"
-        )
+        logger.info("Computing placement stability report:")
         max_settle_displacement = 0
         error_eps = 0.1
-        unstable_placements: List[str] = []  # list of unstable object handles
+        unstable_placements = []
         for new_object in self.ep_sampled_objects:
             error = (
                 spawn_positions[new_object.handle] - new_object.translation
@@ -885,21 +839,6 @@ class RearrangeEpisodeGenerator:
                 logger.info(
                     f"    Object '{new_object.handle}' unstable. Moved {error} units from placement."
                 )
-                if self._render_debug_obs:
-                    self.vdb.peek_rigid_object(
-                        obj=new_object,
-                        peek_all_axis=True,
-                        additional_savefile_prefix="unstable_",
-                        debug_lines=[
-                            (
-                                [
-                                    spawn_positions[new_object.handle],
-                                    new_object.translation,
-                                ],
-                                mn.Color4.red(),
-                            )
-                        ],
-                    )
         logger.info(
             f" : unstable={len(unstable_placements)}|{len(self.ep_sampled_objects)} ({len(unstable_placements)/len(self.ep_sampled_objects)*100}%) : {unstable_placements}."
         )
@@ -913,91 +852,5 @@ class RearrangeEpisodeGenerator:
                 prefix="settle_", fps=30, obs_cache=settle_db_obs
             )
 
-        # collect detailed receptacle stability report log
-        detailed_receptacle_stability_report = (
-            "  Detailed receptacle stability analysis:"
-        )
-
-        # compute number of unstable objects for each receptacle
-        rec_num_obj_vs_unstable: Dict[Receptacle, Dict[str, int]] = {}
-        for obj_name, rec in self.object_to_containing_receptacle.items():
-            if rec not in rec_num_obj_vs_unstable:
-                rec_num_obj_vs_unstable[rec] = {
-                    "num_objects": 0,
-                    "num_unstable_objects": 0,
-                }
-            rec_num_obj_vs_unstable[rec]["num_objects"] += 1
-            if obj_name in unstable_placements:
-                rec_num_obj_vs_unstable[rec]["num_unstable_objects"] += 1
-        for rec, obj_in_rec in rec_num_obj_vs_unstable.items():
-            detailed_receptacle_stability_report += f"\n      receptacle '{rec.unique_name}': ({obj_in_rec['num_unstable_objects']}/{obj_in_rec['num_objects']}) (unstable/total) objects."
-
-        success = len(unstable_placements) == 0
-
-        # count unstable target objects, these can't be salvaged
-        unstable_target_objects = [
-            obj_name
-            for obj_name in unstable_placements
-            if obj_name in target_object_names
-        ]
-
-        # optionally salvage the episode by removing unstable objects
-        if (
-            self.cfg.correct_unstable_results
-            and not success
-            and len(unstable_target_objects) == 0
-        ):
-            detailed_receptacle_stability_report += (
-                "\n  attempting to correct unstable placements..."
-            )
-            for sampler_name, objects in self.episode_data[
-                "sampled_objects"
-            ].items():
-                obj_names = [obj.handle for obj in objects]
-                sampler = self._obj_samplers[sampler_name]
-                unstable_subset = [
-                    obj_name
-                    for obj_name in unstable_placements
-                    if obj_name in obj_names
-                ]
-
-                # check that we have freedom to reject some objects
-                num_required_objects = sampler.num_objects[0]
-                num_stable_objects = len(objects) - len(unstable_subset)
-                if num_stable_objects >= num_required_objects:
-                    # remove the unstable objects from datastructures
-                    self.episode_data["sampled_objects"][sampler_name] = [
-                        obj
-                        for obj in self.episode_data["sampled_objects"][
-                            sampler_name
-                        ]
-                        if obj.handle not in unstable_subset
-                    ]
-                    self.ep_sampled_objects = [
-                        obj
-                        for obj in self.ep_sampled_objects
-                        if obj.handle not in unstable_subset
-                    ]
-                else:
-                    detailed_receptacle_stability_report += f"\n  ... could not remove all unstable placements without violating minimum object sampler requirements for {sampler_name}"
-                    detailed_receptacle_stability_report += (
-                        "\n----------------------------------------"
-                    )
-                    logger.info(detailed_receptacle_stability_report)
-                    return False
-            detailed_receptacle_stability_report += f"\n  ... corrected unstable placements successfully. Final object count = {len(self.ep_sampled_objects)}"
-            # we removed all unstable placements
-            success = True
-
-        detailed_receptacle_stability_report += (
-            "\n----------------------------------------"
-        )
-        logger.info(detailed_receptacle_stability_report)
-
-        # generate debug images of all final object placements
-        if self._render_debug_obs and success:
-            for obj in self.ep_sampled_objects:
-                self.vdb.peek_rigid_object(obj, peek_all_axis=True)
-
         # return success or failure
-        return success
+        return len(unstable_placements) == 0

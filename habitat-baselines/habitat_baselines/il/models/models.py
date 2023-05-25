@@ -325,6 +325,7 @@ class VqaLstmCnnAttentionModel(nn.Module):
     def forward(
         self, images: Tensor, questions: Tensor
     ) -> Tuple[Tensor, Tensor]:
+
         N, T, _, _, _ = images.size()
         # bs x 5 x 3 x 256 x 256
         img_feats = self.cnn(
@@ -445,6 +446,7 @@ class NavPlannerControllerModel(nn.Module):
         controller_actions_in: Tensor,
         controller_action_lengths: Tensor,
     ) -> Tuple[Tensor, Tensor, Tensor]:
+
         N_p, T_p, _ = planner_img_feats.size()
 
         planner_img_feats = self.cnn_fc_layer(planner_img_feats)
@@ -526,6 +528,7 @@ class NavPlannerControllerModel(nn.Module):
     def controller_step(
         self, img_feats: Tensor, actions_in: Tensor, hidden_in: Tensor
     ) -> Tensor:
+
         img_feats = self.cnn_fc_layer(img_feats)
         actions_embed = self.planner_nav_rnn.action_embed(actions_in)
 
@@ -644,6 +647,7 @@ class NavRnn(nn.Module):
         action_lengths: Tensor,
         hidden: bool = False,
     ) -> Union[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor, Tensor]]:
+
         T: Union[int, bool] = False
         if self.image_input is True:
             N, T, _ = img_feats.size()
@@ -691,6 +695,7 @@ class NavRnn(nn.Module):
         actions_in: Tensor,
         hidden: HiddenState,
     ) -> Tuple[Tensor, Tensor]:
+
         T: Union[bool, int] = False
         if self.image_input is True:
             N, T, _ = img_feats.size()

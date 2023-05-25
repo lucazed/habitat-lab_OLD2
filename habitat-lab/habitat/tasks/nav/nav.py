@@ -13,7 +13,6 @@ import numpy as np
 import quaternion
 from gym import spaces
 
-from habitat.config import read_write
 from habitat.config.default import get_agent_config
 from habitat.core.dataset import Dataset, Episode
 from habitat.core.embodied_task import (
@@ -61,6 +60,10 @@ cv2 = try_cv2_import()
 
 
 MAP_THICKNESS_SCALAR: int = 128
+
+# These metrics are not scalars and cannot be easily reported
+# (unless using videos)
+NON_SCALAR_METRICS = {"top_down_map", "collisions.is_collision"}
 
 
 @attr.s(auto_attribs=True, kw_only=True)
@@ -374,7 +377,7 @@ class HeadingSensor(Sensor):
 
 @registry.register_sensor(name="CompassSensor")
 class EpisodicCompassSensor(HeadingSensor):
-    r"""The agents heading in the coordinate frame defined by the episode,
+    r"""The agents heading in the coordinate frame defined by the epiosde,
     theta=0 is defined by the agents state at t=0
     """
     cls_uuid: str = "compass"
@@ -515,7 +518,6 @@ class Success(Measure):
     ):
         self._sim = sim
         self._config = config
-        self._success_distance = self._config.success_distance
 
         super().__init__()
 
@@ -538,7 +540,7 @@ class Success(Measure):
         if (
             hasattr(task, "is_stop_called")
             and task.is_stop_called  # type: ignore
-            and distance_to_target < self._success_distance
+            and distance_to_target < self._config.success_distance
         ):
             self._metric = 1.0
         else:
@@ -662,15 +664,18 @@ class Collisions(Measure):
     def __init__(self, sim, config, *args: Any, **kwargs: Any):
         self._sim = sim
         self._config = config
+        self._metric = None
         super().__init__()
 
     def _get_uuid(self, *args: Any, **kwargs: Any) -> str:
         return "collisions"
 
     def reset_metric(self, episode, *args: Any, **kwargs: Any):
-        self._metric = {"count": 0, "is_collision": False}
+        self._metric = None
 
     def update_metric(self, episode, action, *args: Any, **kwargs: Any):
+        if self._metric is None:
+            self._metric = {"count": 0, "is_collision": False}
         self._metric["is_collision"] = False
         if self._sim.previous_step_collided:
             self._metric["count"] += 1
@@ -697,7 +702,7 @@ class TopDownMap(Measure):
         self._ind_x_max: Optional[int] = None
         self._ind_y_min: Optional[int] = None
         self._ind_y_max: Optional[int] = None
-        self._previous_xy_location: List[Optional[Tuple[int, int]]] = None
+        self._previous_xy_location: Optional[Tuple[int, int]] = None
         self._top_down_map: Optional[np.ndarray] = None
         self._shortest_path_points: Optional[List[Tuple[int, int]]] = None
         self.line_thickness = int(
@@ -753,6 +758,7 @@ class TopDownMap(Measure):
 
     def _draw_goals_positions(self, episode):
         if self._config.draw_goal_positions:
+
             for goal in episode.goals:
                 if self._is_on_same_floor(goal.position[1]):
                     try:
@@ -846,12 +852,19 @@ class TopDownMap(Measure):
         return ref_floor_height <= height < ref_floor_height + ceiling_height
 
     def reset_metric(self, episode, *args: Any, **kwargs: Any):
-        self._top_down_map = self.get_original_map()
         self._step_count = 0
+        self._metric = None
+        self._top_down_map = self.get_original_map()
         agent_position = self._sim.get_agent_state().position
-        self._previous_xy_location = [
-            None for _ in range(len(self._sim.habitat_config.agents))
-        ]
+        a_x, a_y = maps.to_grid(
+            agent_position[2],
+            agent_position[0],
+            (self._top_down_map.shape[0], self._top_down_map.shape[1]),
+            sim=self._sim,
+        )
+        self._previous_xy_location = (a_y, a_x)
+
+        self.update_fog_of_war_mask(np.array([a_x, a_y]))
 
         if hasattr(episode, "goals"):
             # draw source and target parts last to avoid overlap
@@ -865,36 +878,33 @@ class TopDownMap(Measure):
                 episode.start_position, maps.MAP_SOURCE_POINT_INDICATOR
             )
 
-        self.update_metric(episode, None)
-        self._step_count = 0
-
     def update_metric(self, episode, action, *args: Any, **kwargs: Any):
         self._step_count += 1
-        map_positions: List[Tuple[float]] = []
-        map_angles = []
-        for agent_index in range(len(self._sim.habitat_config.agents)):
-            agent_state = self._sim.get_agent_state(agent_index)
-            map_positions.append(self.update_map(agent_state, agent_index))
-            map_angles.append(TopDownMap.get_polar_angle(agent_state))
+        house_map, map_agent_x, map_agent_y = self.update_map(
+            self._sim.get_agent_state().position
+        )
+
         self._metric = {
-            "map": self._top_down_map,
+            "map": house_map,
             "fog_of_war_mask": self._fog_of_war_mask,
-            "agent_map_coord": map_positions,
-            "agent_angle": map_angles,
+            "agent_map_coord": (map_agent_x, map_agent_y),
+            "agent_angle": self.get_polar_angle(),
         }
 
-    @staticmethod
-    def get_polar_angle(agent_state):
+    def get_polar_angle(self):
+        agent_state = self._sim.get_agent_state()
         # quaternion is in x, y, z, w format
         ref_rotation = agent_state.rotation
+
         heading_vector = quaternion_rotate_vector(
             ref_rotation.inverse(), np.array([0, 0, -1])
         )
-        phi = cartesian_to_polar(heading_vector[2], -heading_vector[0])[1]
-        return np.array(phi)
 
-    def update_map(self, agent_state: AgentState, agent_index: int):
-        agent_position = agent_state.position
+        phi = cartesian_to_polar(-heading_vector[2], heading_vector[0])[1]
+        z_neg_z_flip = np.pi
+        return np.array(phi) + z_neg_z_flip
+
+    def update_map(self, agent_position):
         a_x, a_y = maps.to_grid(
             agent_position[2],
             agent_position[0],
@@ -908,27 +918,26 @@ class TopDownMap(Measure):
             )
 
             thickness = self.line_thickness
-            if self._previous_xy_location[agent_index] is not None:
-                cv2.line(
-                    self._top_down_map,
-                    self._previous_xy_location[agent_index],
-                    (a_y, a_x),
-                    color,
-                    thickness=thickness,
-                )
-        angle = TopDownMap.get_polar_angle(agent_state)
-        self.update_fog_of_war_mask(np.array([a_x, a_y]), angle)
+            cv2.line(
+                self._top_down_map,
+                self._previous_xy_location,
+                (a_y, a_x),
+                color,
+                thickness=thickness,
+            )
 
-        self._previous_xy_location[agent_index] = (a_y, a_x)
-        return a_x, a_y
+        self.update_fog_of_war_mask(np.array([a_x, a_y]))
 
-    def update_fog_of_war_mask(self, agent_position, angle):
+        self._previous_xy_location = (a_y, a_x)
+        return self._top_down_map, a_x, a_y
+
+    def update_fog_of_war_mask(self, agent_position):
         if self._config.fog_of_war.draw:
             self._fog_of_war_mask = fog_of_war.reveal_fog_of_war(
                 self._top_down_map,
                 self._fog_of_war_mask,
                 agent_position,
-                angle,
+                self.get_polar_angle(),
                 fov=self._config.fog_of_war.fov,
                 max_line_len=self._config.fog_of_war.visibility_dist
                 / maps.calculate_meters_per_pixel(
@@ -952,7 +961,6 @@ class DistanceToGoal(Measure):
         self._episode_view_points: Optional[
             List[Tuple[float, float, float]]
         ] = None
-        self._distance_to = self._config.distance_to
 
         super().__init__(**kwargs)
 
@@ -961,7 +969,8 @@ class DistanceToGoal(Measure):
 
     def reset_metric(self, episode, *args: Any, **kwargs: Any):
         self._previous_position = None
-        if self._distance_to == "VIEW_POINTS":
+        self._metric = None
+        if self._config.distance_to == "VIEW_POINTS":
             self._episode_view_points = [
                 view_point.agent_state.position
                 for goal in episode.goals
@@ -977,19 +986,19 @@ class DistanceToGoal(Measure):
         if self._previous_position is None or not np.allclose(
             self._previous_position, current_position, atol=1e-4
         ):
-            if self._distance_to == "POINT":
+            if self._config.distance_to == "POINT":
                 distance_to_target = self._sim.geodesic_distance(
                     current_position,
                     [goal.position for goal in episode.goals],
                     episode,
                 )
-            elif self._distance_to == "VIEW_POINTS":
+            elif self._config.distance_to == "VIEW_POINTS":
                 distance_to_target = self._sim.geodesic_distance(
                     current_position, self._episode_view_points, episode
                 )
             else:
                 logger.error(
-                    f"Non valid distance_to parameter was provided: {self._distance_to }"
+                    f"Non valid distance_to parameter was provided: {self._config.distance_to}"
                 )
 
             self._previous_position = (
@@ -1040,24 +1049,6 @@ class DistanceToGoalReward(Measure):
         self._previous_distance = distance_to_target
 
 
-class NavigationMovementAgentAction(SimulatorTaskAction):
-    def __init__(self, *args, config, sim, **kwargs):
-        super().__init__(*args, config=config, sim=sim, **kwargs)
-        self._sim = sim
-        self._tilt_angle = config.tilt_angle
-
-    def _move_camera_vertical(self, amount: float):
-        assert (
-            len(self._sim.agents) == 1  # type: ignore
-        ), "For navigation tasks, there can be only one agent in the scene"
-        sensor_names = list(self._sim.agents[0]._sensors.keys())  # type: ignore
-        for sensor_name in sensor_names:
-            sensor = self._sim.agents[0]._sensors[sensor_name].node  # type: ignore
-            sensor.rotation = sensor.rotation * mn.Quaternion.rotation(
-                mn.Deg(amount), mn.Vector3.x_axis()
-            )
-
-
 @registry.register_task_action
 class MoveForwardAction(SimulatorTaskAction):
     name: str = "move_forward"
@@ -1084,7 +1075,6 @@ class TurnRightAction(SimulatorTaskAction):
         r"""Update ``_metric``, this method is called from ``Env`` on each
         ``step``.
         """
-
         return self._sim.step(HabitatSimActions.turn_right)
 
 
@@ -1100,24 +1090,25 @@ class StopAction(SimulatorTaskAction):
         ``step``.
         """
         task.is_stop_called = True  # type: ignore
+        return self._sim.get_observations_at()  # type: ignore
 
 
 @registry.register_task_action
-class LookUpAction(NavigationMovementAgentAction):
+class LookUpAction(SimulatorTaskAction):
     def step(self, *args: Any, **kwargs: Any):
         r"""Update ``_metric``, this method is called from ``Env`` on each
         ``step``.
         """
-        self._move_camera_vertical(self._tilt_angle)
+        return self._sim.step(HabitatSimActions.look_up)
 
 
 @registry.register_task_action
-class LookDownAction(NavigationMovementAgentAction):
+class LookDownAction(SimulatorTaskAction):
     def step(self, *args: Any, **kwargs: Any):
         r"""Update ``_metric``, this method is called from ``Env`` on each
         ``step``.
         """
-        self._move_camera_vertical(-self._tilt_angle)
+        return self._sim.step(HabitatSimActions.look_down)
 
 
 @registry.register_task_action
@@ -1145,10 +1136,10 @@ class TeleportAction(SimulatorTaskAction):
             rotation = list(rotation)
 
         if not self._sim.is_navigable(position):
-            return
+            return self._sim.get_observations_at()  # type: ignore
 
-        self._sim.set_agent_state(  # type:ignore
-            position, rotation, reset_sensors=False
+        return self._sim.get_observations_at(
+            position=position, rotation=rotation, keep_agent_at_new_pose=True
         )
 
     @property
@@ -1187,7 +1178,6 @@ class VelocityAction(SimulatorTaskAction):
         self.min_abs_lin_speed = config.min_abs_lin_speed
         self.min_abs_ang_speed = config.min_abs_ang_speed
         self.time_step = config.time_step
-        self._allow_sliding = self._sim.config.sim_cfg.allow_sliding  # type: ignore
 
     @property
     def action_space(self):
@@ -1231,7 +1221,7 @@ class VelocityAction(SimulatorTaskAction):
             allow_sliding: whether the agent will slide on collision
         """
         if allow_sliding is None:
-            allow_sliding = self._allow_sliding
+            allow_sliding = self._sim.config.sim_cfg.allow_sliding  # type: ignore
         if time_step is None:
             time_step = self.time_step
 
@@ -1253,7 +1243,7 @@ class VelocityAction(SimulatorTaskAction):
             and abs(angular_velocity) < self.min_abs_ang_speed
         ):
             task.is_stop_called = True  # type: ignore
-            return
+            return self._sim.get_observations_at(position=None, rotation=None)
 
         angular_velocity = np.deg2rad(angular_velocity)
         self.vel_control.linear_velocity = np.array(
@@ -1293,7 +1283,7 @@ class VelocityAction(SimulatorTaskAction):
             goal_rigid_state.rotation.scalar,
         ]
 
-        # Check if a collision occurred
+        # Check if a collision occured
         dist_moved_before_filter = (
             goal_rigid_state.translation - agent_state.position
         ).dot()
@@ -1307,11 +1297,16 @@ class VelocityAction(SimulatorTaskAction):
         EPS = 1e-5
         collided = (dist_moved_after_filter + EPS) < dist_moved_before_filter
 
-        self._sim.set_agent_state(  # type:ignore
-            final_position, final_rotation, reset_sensors=False
+        agent_observations = self._sim.get_observations_at(
+            position=final_position,
+            rotation=final_rotation,
+            keep_agent_at_new_pose=True,
         )
+
         # TODO: Make a better way to flag collisions
         self._sim._prev_sim_obs["collided"] = collided  # type: ignore
+
+        return agent_observations
 
 
 @registry.register_task(name="Nav-v0")
@@ -1324,20 +1319,19 @@ class NavigationTask(EmbodiedTask):
     ) -> None:
         super().__init__(config=config, sim=sim, dataset=dataset)
 
-    def overwrite_sim_config(self, config: Any, episode: Episode) -> Any:
-        with read_write(config):
-            config.simulator.scene = episode.scene_id
-            if (
-                episode.start_position is not None
-                and episode.start_rotation is not None
-            ):
-                agent_config = get_agent_config(config.simulator)
-                agent_config.start_position = episode.start_position
-                agent_config.start_rotation = [
-                    float(k) for k in episode.start_rotation
-                ]
-                agent_config.is_set_start_state = True
-        return config
+    def overwrite_sim_config(self, sim_config: Any, episode: Episode) -> Any:
+        sim_config.scene = episode.scene_id
+        if (
+            episode.start_position is not None
+            and episode.start_rotation is not None
+        ):
+            agent_config = get_agent_config(sim_config)
+            agent_config.start_position = episode.start_position
+            agent_config.start_rotation = [
+                float(k) for k in episode.start_rotation
+            ]
+            agent_config.is_set_start_state = True
+        return sim_config
 
     def _check_episode_is_active(self, *args: Any, **kwargs: Any) -> bool:
         return not getattr(self, "is_stop_called", False)

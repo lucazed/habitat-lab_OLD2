@@ -7,7 +7,7 @@ defaults:
     - base_velocity
     - empty
   - /habitat/task/measurements:
-    - articulated_agent_force
+    - robot_force
   - /habitat/task/lab_sensors:
     - joint_sensor
   - _self_
@@ -26,6 +26,9 @@ base_angle_noise: 0.0
 base_noise: 0.0
 constraint_violation_ends_episode: False
 
+# If true, does not care about navigability or collisions
+# with objects when spawning robot
+easy_init: False
 force_regenerate: True
 
 actions:

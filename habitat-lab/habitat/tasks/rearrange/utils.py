@@ -17,7 +17,6 @@ import numpy as np
 import quaternion
 
 import habitat_sim
-from habitat.articulated_agents.mobile_manipulator import MobileManipulator
 from habitat.core.logging import HabitatLogger
 from habitat.tasks.utils import get_angle
 from habitat_sim.physics import MotionType
@@ -96,17 +95,17 @@ def rearrange_collision(
     agent_idx: Optional[int] = None,
 ):
     """Defines what counts as a collision for the Rearrange environment execution"""
-    agent_model = sim.get_agent_data(agent_idx).articulated_agent
-    grasp_mgr = sim.get_agent_data(agent_idx).grasp_mgr
+    robot_model = sim.get_robot_data(agent_idx).robot
+    grasp_mgr = sim.get_robot_data(agent_idx).grasp_mgr
     colls = sim.get_physics_contact_points()
-    agent_id = agent_model.get_robot_sim_id()
+    robot_id = robot_model.get_robot_sim_id()
     added_objs = sim.scene_obj_ids
     snapped_obj_id = grasp_mgr.snap_idx
 
     def should_keep(x):
         if ignore_base:
-            match_link = get_match_link(x, agent_id)
-            if match_link is not None and agent_model.is_base_link(match_link):
+            match_link = get_match_link(x, robot_id)
+            if match_link is not None and robot_model.is_base_link(match_link):
                 return False
 
         if ignore_names is not None:
@@ -125,17 +124,17 @@ def rearrange_collision(
     # Check for robot collision
     robot_obj_colls = 0
     robot_scene_colls = 0
-    robot_scene_matches = [c for c in colls if coll_name_matches(c, agent_id)]
+    robot_scene_matches = [c for c in colls if coll_name_matches(c, robot_id)]
     for match in robot_scene_matches:
         reg_obj_coll = any(
-            coll_name_matches(match, obj_id) for obj_id in added_objs
+            [coll_name_matches(match, obj_id) for obj_id in added_objs]
         )
         if reg_obj_coll:
             robot_obj_colls += 1
         else:
             robot_scene_colls += 1
 
-        if match.object_id_a == agent_id:
+        if match.object_id_a == robot_id:
             robot_coll_ids.append(match.object_id_b)
         else:
             robot_coll_ids.append(match.object_id_a)
@@ -145,7 +144,7 @@ def rearrange_collision(
     if count_obj_colls and snapped_obj_id is not None:
         matches = [c for c in colls if coll_name_matches(c, snapped_obj_id)]
         for match in matches:
-            if coll_name_matches(match, agent_id):
+            if coll_name_matches(match, robot_id):
                 continue
             obj_scene_colls += 1
 
@@ -359,16 +358,16 @@ class IkHelper:
         return js[: self._arm_len]
 
 
-class UsesArticulatedAgentInterface:
+class UsesRobotInterface:
     """
-    For sensors or actions that are agent specific. Used to split actions and
-    sensors between multiple agents.
+    For sensors or actions that are robot specific. Used to split actions and
+    sensors between multiple robots.
     """
 
     def __init__(self, *args, **kwargs):
         # This init call is necessary for using this class with `Measure`.
         super().__init__(*args, **kwargs)
-        self.agent_id = None
+        self.robot_id = None
 
 
 def write_gfx_replay(gfx_keyframe_str, task_config, ep_id):
@@ -391,32 +390,25 @@ def write_gfx_replay(gfx_keyframe_str, task_config, ep_id):
 def get_robot_spawns(
     target_position: np.ndarray,
     rotation_perturbation_noise: float,
-    distance_threshold: float,
+    distance_threshold: int,
     sim,
     num_spawn_attempts: int,
     physics_stability_steps: int,
-    agent: Optional[MobileManipulator] = None,
-) -> Tuple[np.ndarray, float, bool]:
+):
     """
-    Attempts to place the robot near the target position, facing towards it.
-    This does NOT set the position or angle of the robot, even if a place is
-    successful.
+    Attempts to place the robot near the target position, facing towards it
 
-    :param target_position: The position of the target. This point is not
-        necessarily on the navmesh.
+    :param target_position: The position of the target.
     :param rotation_perturbation_noise: The amount of noise to add to the robot's rotation.
     :param distance_threshold: The maximum distance from the target.
     :param sim: The simulator instance.
     :param num_spawn_attempts: The number of sample attempts for the distance threshold.
     :param physics_stability_steps: The number of steps to perform for physics stability check.
-    :param agent: The agent to set the position for. If not specified, defaults to the simulator default agent.
 
-    :return: The robot's start position, rotation, and whether the placement was a failure (True for failure, False for success).
+    :return: The robot's start position, rotation, and whether the placement was successful.
     """
 
     state = sim.capture_state()
-    if agent is None:
-        agent = sim.articulated_agent
 
     # Try to place the robot.
     for _ in range(num_spawn_attempts):
@@ -442,8 +434,8 @@ def get_robot_spawns(
         if target_distance > distance_threshold or not is_navigable:
             continue
 
-        agent.base_pos = start_position
-        agent.base_rot = start_rotation
+        sim.robot.base_pos = start_position
+        sim.robot.base_rot = start_rotation
 
         # Make sure the robot is not colliding with anything in this
         # position.

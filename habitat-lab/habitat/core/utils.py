@@ -143,6 +143,7 @@ class DatasetFloatJSONEncoder(DatasetJSONEncoder):
     # Overriding method to inject own `_repr` function for floats with needed
     # precision.
     def iterencode(self, o, _one_shot=False):
+
         markers: Optional[Dict] = {} if self.check_circular else None
         if self.ensure_ascii:
             _encoder = encode_basestring_ascii

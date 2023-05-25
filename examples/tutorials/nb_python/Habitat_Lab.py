@@ -112,13 +112,12 @@ def display_sample(
 # ## Setup PointNav Task
 
 # %%
+# cat "./test/habitat_all_sensors_test.yaml"
+
+# %%
 if __name__ == "__main__":
     config = habitat.get_config(
-        config_path="benchmark/nav/pointnav/pointnav_habitat_test.yaml",
-        overrides=[
-            "habitat.environment.max_episode_steps=10",
-            "habitat.environment.iterator_options.shuffle=False",
-        ],
+        config_path="./test/habitat_all_sensors_test.yaml"
     )
 
     try:
@@ -246,11 +245,7 @@ except ImportError:
 # %%
 if __name__ == "__main__":
     config = habitat.get_config(
-        config_path="benchmark/nav/pointnav/pointnav_habitat_test.yaml",
-        overrides=[
-            "habitat.environment.max_episode_steps=10",
-            "habitat.environment.iterator_options.shuffle=False",
-        ],
+        config_path="./test/habitat_all_sensors_test.yaml"
     )
 
 
@@ -311,7 +306,6 @@ if __name__ == "__main__":
 # %% [markdown]
 # ## Create a new Sensor
 
-
 # %%
 @registry.register_sensor(name="agent_position_sensor")
 class AgentPositionSensor(habitat.Sensor):
@@ -344,11 +338,7 @@ class AgentPositionSensor(habitat.Sensor):
 # %%
 if __name__ == "__main__":
     config = habitat.get_config(
-        config_path="benchmark/nav/pointnav/pointnav_habitat_test.yaml",
-        overrides=[
-            "habitat.environment.max_episode_steps=10",
-            "habitat.environment.iterator_options.shuffle=False",
-        ],
+        config_path="./test/habitat_all_sensors_test.yaml"
     )
 
     from habitat.config.default_structured_configs import LabSensorConfig

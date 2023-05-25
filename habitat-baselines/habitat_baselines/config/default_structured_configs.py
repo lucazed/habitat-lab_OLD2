@@ -4,13 +4,12 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from hydra.core.config_store import ConfigStore
-from omegaconf import MISSING
-
-from habitat.config.default_structured_configs import SimulatorSensorConfig
+from omegaconf import II, MISSING
 
 cs = ConfigStore.instance()
 
@@ -47,9 +46,6 @@ class EvalConfig(HabitatBaselinesBaseConfig):
     video_option: List[str] = field(
         # available options are "disk" and "tensorboard"
         default_factory=list
-    )
-    extra_sim_sensors: Dict[str, SimulatorSensorConfig] = field(
-        default_factory=dict
     )
 
 
@@ -224,49 +220,9 @@ cs.store(
 
 
 @dataclass
-class HrlDefinedSkillConfig(HabitatBaselinesBaseConfig):
-    """
-    Defines a low-level skill to be used in the hierarchical policy.
-    """
-
-    skill_name: str = MISSING
-    name: str = "PointNavResNetPolicy"
-    action_distribution_type: str = "gaussian"
-    load_ckpt_file: str = ""
-    max_skill_steps: int = 200
-    # If true, the stop action will be called if the skill times out.
-    force_end_on_timeout: bool = True
-    # Overrides the config file of a neural network skill rather than loading
-    # the config file from the checkpoint file.
-    force_config_file: str = ""
-    at_resting_threshold: float = 0.15
-    # If true, this willapply the post-conditions of the skill after it
-    # terminates.
-    apply_postconds: bool = False
-
-    # If true, do not call grip_actions automatically when calling high level skills.
-    # Do not check either if an arm action necessarily exists.
-    ignore_grip: bool = False
-    obs_skill_inputs: List[str] = field(default_factory=list)
-    obs_skill_input_dim: int = 3
-    start_zone_radius: float = 0.3
-    # For the oracle navigation skill
-    action_name: str = "base_velocity"
-    stop_thresh: float = 0.001
-    # For the reset_arm_skill
-    reset_joint_state: List[float] = MISSING
-    # The set of PDDL action names (as defined in the PDDL domain file) that
-    # map to this skill. If not specified,the name of the skill must match the
-    # PDDL action name.
-    pddl_action_names: Optional[List[str]] = None
-
-
-@dataclass
-class HierarchicalPolicyConfig(HabitatBaselinesBaseConfig):
+class HierarchicalPolicy(HabitatBaselinesBaseConfig):
     high_level_policy: Dict[str, Any] = MISSING
-    defined_skills: Dict[str, HrlDefinedSkillConfig] = field(
-        default_factory=dict
-    )
+    defined_skills: Dict[str, Any] = field(default_factory=dict)
     use_skills: Dict[str, str] = field(default_factory=dict)
 
 
@@ -278,7 +234,7 @@ class PolicyConfig(HabitatBaselinesBaseConfig):
     # For gaussian action distribution:
     action_dist: ActionDistributionConfig = ActionDistributionConfig()
     obs_transforms: Dict[str, ObsTransformConfig] = field(default_factory=dict)
-    hierarchical_policy: HierarchicalPolicyConfig = MISSING
+    hierarchical_policy: HierarchicalPolicy = MISSING
 
 
 @dataclass
@@ -360,21 +316,57 @@ class DDPPOConfig(HabitatBaselinesBaseConfig):
 
 
 @dataclass
-class AgentAccessMgrConfig(HabitatBaselinesBaseConfig):
-    type: str = "SingleAgentAccessMgr"
-
-
-@dataclass
 class RLConfig(HabitatBaselinesBaseConfig):
     """Reinforcement learning config"""
 
-    agent: AgentAccessMgrConfig = AgentAccessMgrConfig()
     preemption: PreemptionConfig = PreemptionConfig()
     policy: PolicyConfig = PolicyConfig()
     ppo: PPOConfig = PPOConfig()
     ddppo: DDPPOConfig = DDPPOConfig()
     ver: VERConfig = VERConfig()
     auxiliary_losses: Dict[str, AuxLossConfig] = field(default_factory=dict)
+
+
+@dataclass
+class ORBSLAMConfig(HabitatBaselinesBaseConfig):
+    """ORB-SLAM config"""
+
+    slam_vocab_path: str = "habitat_baselines/slambased/data/ORBvoc.txt"
+    slam_settings_path: str = (
+        "habitat_baselines/slambased/data/mp3d3_small1k.yaml"
+    )
+    map_cell_size: float = 0.1
+    map_size: int = 40
+    # camera_height = (
+    #     get_task_config().habitat.simulator.depth_sensor.position[1]
+    # )
+    camera_height: float = II("habitat.simulator.depth_sensor.position[1]")
+    beta: int = 100
+    # h_obstacle_min = 0.3 * _C.orbslam2.camera_height
+    h_obstacle_min: float = 0.3 * 1.25
+    # h_obstacle_max = 1.0 * _C.orbslam2.camera_height
+    h_obstacle_max = 1.0 * 1.25
+    d_obstacle_min: float = 0.1
+    d_obstacle_max: float = 4.0
+    preprocess_map: bool = True
+    # Note: hydra does not support basic operators in interpolations of numbers
+    # see https://github.com/omry/omegaconf/issues/91 for more details
+    # min_pts_in_obstacle = (
+    #     get_task_config().habitat.simulator.depth_sensor.width / 2.0
+    # )
+    # Workaround for the operation above:
+    # (640 is the default habitat depth sensor width)
+    min_pts_in_obstacle: float = 640 / 2.0
+    angle_th: float = math.radians(15)  # float(np.deg2rad(15))
+    dist_reached_th: float = 0.15
+    next_waypoint_th: float = 0.5
+    num_actions: int = 3
+    dist_to_stop: float = 0.05
+    planner_max_steps: int = 500
+    # depth_denorm = (
+    #     get_task_config().habitat.simulator.depth_sensor.max_depth
+    # )
+    depth_denorm: float = II("habitat.simulator.depth_sensor.max_depth")
 
 
 @dataclass
@@ -386,13 +378,13 @@ class ProfilingConfig(HabitatBaselinesBaseConfig):
 @dataclass
 class HabitatBaselinesConfig(HabitatBaselinesBaseConfig):
     # task config can be a list of configs like "A.yaml,B.yaml"
-    # If habitat_baselines.evaluate is true, the run will be in evaluation mode
-    # replaces --run-type eval when true
-    evaluate: bool = False
+    # base_task_config_path: str = (
+    #     "habitat-lab/habitat/config/task/pointnav.yaml"
+    # )
+    # cmd_trailing_opts: List[str] = field(default_factory=list)
     trainer_name: str = "ppo"
-    updater_name: str = "PPO"
-    distrib_updater_name: str = "DDPPO"
     torch_gpu_id: int = 0
+    video_render_views: List[str] = field(default_factory=list)
     tensorboard_dir: str = "tb"
     writer_type: str = "tb"
     video_dir: str = "video_dir"
@@ -402,7 +394,6 @@ class HabitatBaselinesConfig(HabitatBaselinesBaseConfig):
     eval_ckpt_path_dir: str = "data/checkpoints"
     num_environments: int = 16
     num_processes: int = -1  # deprecated
-    rollout_storage_name: str = "RolloutStorage"
     checkpoint_folder: str = "data/checkpoints"
     num_updates: int = 10000
     num_checkpoints: int = 10
@@ -443,6 +434,11 @@ class HabitatBaselinesILConfig(HabitatBaselinesConfig):
 
 
 @dataclass
+class HabitatBaselinesORBSLAMConfig(HabitatBaselinesConfig):
+    orbslam2: ORBSLAMConfig = ORBSLAMConfig()
+
+
+@dataclass
 class HabitatBaselinesSPAConfig(HabitatBaselinesConfig):
     sense_plan_act: Any = MISSING
 
@@ -452,6 +448,11 @@ cs.store(
     group="habitat_baselines",
     name="habitat_baselines_rl_config_base",
     node=HabitatBaselinesRLConfig(),
+)
+cs.store(
+    group="habitat_baselines",
+    name="habitat_baselines_orbslam2_config_base",
+    node=HabitatBaselinesORBSLAMConfig,
 )
 cs.store(
     group="habitat_baselines",

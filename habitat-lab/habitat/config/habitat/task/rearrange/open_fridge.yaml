@@ -7,9 +7,9 @@ defaults:
     - base_velocity
     - rearrange_stop
   - /habitat/task/measurements:
-    - articulated_agent_force
+    - robot_force
     - force_terminate
-    - articulated_agent_colls
+    - robot_colls
     - end_effector_to_rest_distance
     - ee_dist_to_marker
     - art_obj_at_desired_state

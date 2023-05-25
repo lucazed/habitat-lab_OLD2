@@ -7,6 +7,7 @@ defaults:
   - /habitat/dataset/vln: mp3d_r2r
   - _self_
 
+
 habitat:
   environment:
     max_episode_steps: 500

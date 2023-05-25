@@ -4,8 +4,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 import abc
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Union
 
 import torch
 from gym import spaces
@@ -31,58 +30,6 @@ if TYPE_CHECKING:
     from omegaconf import DictConfig
 
 
-@dataclass
-class PolicyActionData:
-    """
-    Information returned from the `Policy.act` method representing the
-    information from an agent's action.
-
-    :property should_inserts: Of shape [# envs, 1]. If False at environment
-        index `i`, then don't write this transition to the rollout buffer. If
-        `None`, then write all data.
-    :property policy_info`: Optional logging information about the policy per
-        environment. For example, you could log the policy entropy.
-    :property take_actions`: If specified, these actions will be executed in
-        the environment, but not stored in the storage buffer. This allows
-        exectuing and learning from different actions. If not specified, the
-        agent will execute `self.actions`.
-    :property values: The actor value predictions. None if the actor does not predict value.
-    :property actions: The actions to store in the storage buffer. if
-        `take_actions` is None, then this is also the action executed in the
-        environment.
-    :property rnn_hidden_states: Actor hidden states.
-    :property action_log_probs: The log probabilities of the actions under the
-        current policy.
-    """
-
-    rnn_hidden_states: torch.Tensor
-    actions: Optional[torch.Tensor] = None
-    values: Optional[torch.Tensor] = None
-    action_log_probs: Optional[torch.Tensor] = None
-    take_actions: Optional[torch.Tensor] = None
-    policy_info: Optional[List[Dict[str, Any]]] = None
-    should_inserts: Optional[torch.BoolTensor] = None
-
-    def write_action(self, write_idx: int, write_action: torch.Tensor) -> None:
-        """
-        Used to override an action across all environments.
-        :param write_idx: The index in the action dimension to write the new action.
-        :param write_action: The action to write at `write_idx`.
-        """
-        self.actions[:, write_idx] = write_action
-
-    @property
-    def env_actions(self) -> torch.Tensor:
-        """
-        The actions to execute in the environment.
-        """
-
-        if self.take_actions is None:
-            return self.actions
-        else:
-            return self.take_actions
-
-
 class Policy(abc.ABC):
     action_distribution: nn.Module
 
@@ -100,46 +47,15 @@ class Policy(abc.ABC):
     def forward(self, *x):
         raise NotImplementedError
 
-    def get_policy_action_space(
-        self, env_action_space: spaces.Space
-    ) -> spaces.Space:
-        return env_action_space
-
-    def _get_policy_components(self) -> List[nn.Module]:
-        return []
-
-    def aux_loss_parameters(self) -> Dict[str, Iterable[torch.Tensor]]:
-        return {}
-
-    def policy_parameters(self) -> Iterable[torch.Tensor]:
-        for c in self._get_policy_components():
-            yield from c.parameters()
-
-    def all_policy_tensors(self) -> Iterable[torch.Tensor]:
-        yield from self.policy_parameters()
-        for c in self._get_policy_components():
-            yield from c.buffers()
-
-    def get_value(
-        self, observations, rnn_hidden_states, prev_actions, masks
-    ) -> torch.Tensor:
-        raise NotImplementedError(
-            "Get value is supported in non-neural network policies."
-        )
-
-    def get_extra(
-        self, action_data: PolicyActionData, infos, dones
-    ) -> List[Dict[str, float]]:
+    def get_policy_info(self, infos, dones) -> List[Dict[str, float]]:
         """
         Gets the log information from the policy at the current time step.
         Currently only called during evaluation. The return list should be
         empty for no logging or a list of size equal to the number of
         environments.
         """
-        if action_data.policy_info is None:
-            return []
-        else:
-            return action_data.policy_info
+
+        return []
 
     def act(
         self,
@@ -148,7 +64,7 @@ class Policy(abc.ABC):
         prev_actions,
         masks,
         deterministic=False,
-    ) -> PolicyActionData:
+    ):
         raise NotImplementedError
 
     @classmethod
@@ -239,12 +155,8 @@ class NetPolicy(nn.Module, Policy):
             action = distribution.sample()
 
         action_log_probs = distribution.log_probs(action)
-        return PolicyActionData(
-            values=value,
-            actions=action,
-            action_log_probs=action_log_probs,
-            rnn_hidden_states=rnn_hidden_states,
-        )
+
+        return value, action, action_log_probs, rnn_hidden_states
 
     def get_value(self, observations, rnn_hidden_states, prev_actions, masks):
         features, _, _ = self.net(
@@ -295,8 +207,18 @@ class NetPolicy(nn.Module, Policy):
             aux_loss_res,
         )
 
-    def _get_policy_components(self) -> List[nn.Module]:
-        return [self.net, self.critic, self.action_distribution]
+    @property
+    def policy_components(self):
+        return (self.net, self.critic, self.action_distribution)
+
+    def policy_parameters(self) -> Iterable[torch.Tensor]:
+        for c in self.policy_components:
+            yield from c.parameters()
+
+    def all_policy_tensors(self) -> Iterable[torch.Tensor]:
+        yield from self.policy_parameters()
+        for c in self.policy_components:
+            yield from c.buffers()
 
     def aux_loss_parameters(self) -> Dict[str, Iterable[torch.Tensor]]:
         return {k: v.parameters() for k, v in self.aux_loss_modules.items()}

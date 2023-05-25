@@ -24,6 +24,7 @@ def my_app_compose_api() -> "DictConfig":
     # This is needed for apps that cannot have
     # a standard @hydra.main() entry point
     with initialize(version_base=None):
+
         cfg = compose(
             overrides=[
                 "+habitat_baselines=habitat_baselines_rl_config_base",

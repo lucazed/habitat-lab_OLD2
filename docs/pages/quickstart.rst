@@ -128,7 +128,7 @@ your episode will be unsuccessful.
 
 Below is a demo of what the example output will look like:
 
-.. image:: ../images/quickstart-images/quickstart.png
+.. image:: quickstart.png
 
 For more examples refer to
 :gh:`Habitat Lab examples <facebookresearch/habitat-lab/tree/main/examples>`

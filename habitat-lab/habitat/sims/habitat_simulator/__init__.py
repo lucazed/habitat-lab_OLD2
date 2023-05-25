@@ -5,6 +5,10 @@
 from habitat.core.registry import registry
 from habitat.core.simulator import Simulator
 
+# from habitat.sims.habitat_simulator.actions import (
+#     HabitatSimV1ActionSpaceConfiguration,
+# )
+
 
 def _try_register_habitat_sim():
     try:
@@ -15,7 +19,11 @@ def _try_register_habitat_sim():
         has_habitat_sim = False
         habitat_sim_import_error = e
 
-    if not has_habitat_sim:
+    if has_habitat_sim:
+        from habitat.sims.habitat_simulator.actions import (  # noqa: F401
+            HabitatSimV1ActionSpaceConfiguration,
+        )
+    else:
 
         @registry.register_simulator(name="Sim-v0")
         class HabitatSimImportError(Simulator):

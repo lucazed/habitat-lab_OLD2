@@ -50,8 +50,6 @@ class RearrangeEpisodeGeneratorConfig:
     additional_object_paths: List[str] = field(
         default_factory=lambda: ["data/objects/ycb/"]
     )
-    # optionally correct unstable states by removing extra unstable objects (within minimum samples limitations)
-    correct_unstable_results: bool = True
     # ----- resource set definitions ------
     # Define the sets of scenes, objects, and receptacles which can be sampled from.
     # The SceneDataset will be searched for resources of each type with handles containing ANY "included" substrings and NO "excluded" substrings.
@@ -204,54 +202,7 @@ def get_config_defaults() -> "DictConfig":
     return OmegaConf.create(RearrangeEpisodeGeneratorConfig())  # type: ignore[call-overload]
 
 
-def print_metadata_mediator(ep_gen):
-    mm = ep_gen.sim.metadata_mediator
-    receptacles = get_all_scenedataset_receptacles(ep_gen.sim)
-    logger.info("==================================")
-    logger.info("Listing SceneDataset Summary")
-    logger.info("==================================")
-    logger.info(f" SceneDataset: {mm.active_dataset}\n")
-    logger.info("--------")
-    logger.info(" Scenes:")
-    logger.info("--------\n    ")
-    logger.info("\n     ".join(mm.get_scene_handles()))
-    logger.info("---------------")
-    logger.info(" Rigid Objects:")
-    logger.info("---------------\n    ")
-    logger.info(
-        "\n     ".join(mm.object_template_manager.get_template_handles()),
-    )
-    logger.info("---------------------")
-    logger.info(" Articulated Objects:")
-    logger.info("---------------------\n    ")
-    logger.info("\n     ".join(mm.urdf_paths))
-
-    logger.info("-------------------------")
-    logger.info("Stage Global Receptacles:")
-    logger.info("-------------------------")
-    for handle, r_list in receptacles["stage"].items():
-        logger.info(f"  - {handle}\n    ")
-        logger.info("\n     ".join(r_list))
-
-    logger.info("-------------------------")
-    logger.info("Rigid Object Receptacles:")
-    logger.info("-------------------------")
-    for handle, r_list in receptacles["rigid"].items():
-        logger.info(f"  - {handle}\n    ")
-        logger.info("\n     ".join(r_list))
-    logger.info("-------------------------------")
-    logger.info("Articulated Object receptacles:")
-    logger.info("-------------------------------")
-    for handle, r_list in receptacles["articulated"].items():
-        logger.info(f"  - {handle}\n    ")
-        logger.info("\n     ".join(r_list))
-
-    logger.info("==================================")
-    logger.info("Done listing SceneDataset summary")
-    logger.info("==================================")
-
-
-def get_arg_parser():
+if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -312,11 +263,7 @@ def get_arg_parser():
         help="The number of episodes to generate.",
     )
     parser.add_argument("--seed", type=int)
-    return parser
 
-
-if __name__ == "__main__":
-    parser = get_arg_parser()
     args, _ = parser.parse_known_args()
 
     if args.seed is not None:
@@ -349,7 +296,52 @@ if __name__ == "__main__":
         if args.list:
             # NOTE: you can retrieve a string CSV rep of the full SceneDataset with ep_gen.sim.metadata_mediator.dataset_report()
             mm = ep_gen.sim.metadata_mediator
-            print_metadata_mediator(mm)
+            receptacles = get_all_scenedataset_receptacles(ep_gen.sim)
+            list_sep = "\n    "
+            logger.info("==================================")
+            logger.info("Listing SceneDataset Summary")
+            logger.info("==================================")
+            logger.info(f" SceneDataset: {mm.active_dataset}\n")
+            logger.info("--------")
+            logger.info(" Scenes:")
+            logger.info("--------\n    ")
+            logger.info("\n     ".join(mm.get_scene_handles()))
+            logger.info("---------------")
+            logger.info(" Rigid Objects:")
+            logger.info("---------------\n    ")
+            logger.info(
+                "\n     ".join(
+                    mm.object_template_manager.get_template_handles()
+                ),
+            )
+            logger.info("---------------------")
+            logger.info(" Articulated Objects:")
+            logger.info("---------------------\n    ")
+            logger.info("\n     ".join(mm.urdf_paths))
+
+            logger.info("-------------------------")
+            logger.info("Stage Global Receptacles:")
+            logger.info("-------------------------")
+            for handle, r_list in receptacles["stage"].items():
+                logger.info(f"  - {handle}\n    ")
+                logger.info("\n     ".join(r_list))
+
+            logger.info("-------------------------")
+            logger.info("Rigid Object Receptacles:")
+            logger.info("-------------------------")
+            for handle, r_list in receptacles["rigid"].items():
+                logger.info(f"  - {handle}\n    ")
+                logger.info("\n     ".join(r_list))
+            logger.info("-------------------------------")
+            logger.info("Articulated Object receptacles:")
+            logger.info("-------------------------------")
+            for handle, r_list in receptacles["articulated"].items():
+                logger.info(f"  - {handle}\n    ")
+                logger.info("\n     ".join(r_list))
+
+            logger.info("==================================")
+            logger.info("Done listing SceneDataset summary")
+            logger.info("==================================")
         else:
             import time
 

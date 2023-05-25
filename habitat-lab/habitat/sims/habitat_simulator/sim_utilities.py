@@ -99,19 +99,22 @@ def add_viz_sphere(
     return new_object
 
 
-def get_bb_corners(range3d: mn.Range3D) -> List[mn.Vector3]:
+def get_bb_corners(
+    obj: habitat_sim.physics.ManagedRigidObject,
+) -> List[mn.Vector3]:
     """
-    Return a list of AABB (Range3D) corners in object local space.
+    Return a list of object bounding box corners in object local space.
     """
+    bb = obj.root_scene_node.cumulative_bb
     return [
-        range3d.back_bottom_left,
-        range3d.back_bottom_right,
-        range3d.back_top_right,
-        range3d.back_top_left,
-        range3d.front_top_left,
-        range3d.front_top_right,
-        range3d.front_bottom_right,
-        range3d.front_bottom_left,
+        bb.back_bottom_left,
+        bb.back_bottom_right,
+        bb.back_top_right,
+        bb.back_top_left,
+        bb.front_top_left,
+        bb.front_top_right,
+        bb.front_bottom_right,
+        bb.front_bottom_left,
     ]
 
 
@@ -157,7 +160,7 @@ def bb_ray_prescreen(
     raycast_results = []
     gravity_dir = sim.get_gravity().normalized()
     object_local_to_global = obj.transformation
-    bb_corners = get_bb_corners(obj.collision_shape_aabb)
+    bb_corners = get_bb_corners(obj)
     key_points = [mn.Vector3(0)] + bb_corners  # [COM, c0, c1 ...]
     support_impacts: Dict[int, mn.Vector3] = {}  # indexed by keypoints
     for ix, key_point in enumerate(key_points):
@@ -205,7 +208,6 @@ def bb_ray_prescreen(
     )
 
     # account for the affects of stage mesh margin
-    # Warning: Bullet raycast on stage triangle mesh does NOT consider the margin, so explicitly consider this here.
     margin_offset = (
         0
         if not highest_support_impact_with_stage
@@ -218,8 +220,7 @@ def bb_ray_prescreen(
         else support_impacts[0]
         + gravity_dir * (base_rel_height - margin_offset)
     )
-
-    # return list of relative base height, object position for surface snapped point, and ray results details
+    # return list of obstructed and grounded rays, relative base height, distance to first surface impact, and ray results details
     return {
         "base_rel_height": base_rel_height,
         "surface_snap_point": surface_snap_point,

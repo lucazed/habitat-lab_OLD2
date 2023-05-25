@@ -53,6 +53,7 @@ def test_pyrobot(mocker):
         _try_register_pyrobot()
 
     with make_sim("PyRobot-v0", config=PyrobotConfig()) as reality:
+
         _ = reality.reset()
         _ = reality.step(
             "go_to_relative",

@@ -5,23 +5,19 @@
 # LICENSE file in the root directory of this source tree.
 
 import warnings
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 import numpy as np
 import torch
 
-from habitat_baselines.common.baseline_registry import baseline_registry
-from habitat_baselines.common.storage import Storage
 from habitat_baselines.common.tensor_dict import DictTree, TensorDict
 from habitat_baselines.rl.models.rnn_state_encoder import (
     build_pack_info_from_dones,
     build_rnn_build_seq_info,
 )
-from habitat_baselines.utils.common import get_action_space_info
 
 
-@baseline_registry.register_storage
-class RolloutStorage(Storage):
+class RolloutStorage:
     r"""Class for storing rollout information for RL trainers."""
 
     def __init__(
@@ -32,10 +28,10 @@ class RolloutStorage(Storage):
         action_space,
         recurrent_hidden_state_size,
         num_recurrent_layers=1,
+        action_shape: Optional[Tuple[int]] = None,
         is_double_buffered: bool = False,
+        discrete_actions: bool = True,
     ):
-        action_shape, discrete_actions = get_action_space_info(action_space)
-
         self.buffers = TensorDict()
         self.buffers["observations"] = TensorDict()
 
@@ -76,6 +72,7 @@ class RolloutStorage(Storage):
             numsteps + 1, num_envs, *action_shape
         )
         if discrete_actions:
+
             assert isinstance(self.buffers["actions"], torch.Tensor)
             assert isinstance(self.buffers["prev_actions"], torch.Tensor)
             self.buffers["actions"] = self.buffers["actions"].long()
@@ -119,7 +116,6 @@ class RolloutStorage(Storage):
         rewards=None,
         next_masks=None,
         buffer_index: int = 0,
-        **kwargs,
     ):
         if not self.is_double_buffered:
             assert buffer_index == 0
@@ -202,7 +198,7 @@ class RolloutStorage(Storage):
                     + self.buffers["rewards"][step]
                 )
 
-    def data_generator(
+    def recurrent_generator(
         self,
         advantages: Optional[torch.Tensor],
         num_mini_batch: int,
@@ -259,15 +255,3 @@ class RolloutStorage(Storage):
 
     def __setstate__(self, state: Dict[str, Any]):
         self.__dict__.update(state)
-
-    def insert_first_observations(self, batch):
-        self.buffers["observations"][0] = batch  # type: ignore
-
-    def get_current_step(self, env_slice, buffer_index):
-        return self.buffers[
-            self.current_rollout_step_idxs[buffer_index],
-            env_slice,
-        ]
-
-    def get_last_step(self):
-        return self.buffers[self.current_rollout_step_idx]

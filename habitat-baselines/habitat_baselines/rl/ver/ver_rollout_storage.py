@@ -144,7 +144,9 @@ class VERRolloutStorage(RolloutStorage):
         action_space,
         recurrent_hidden_state_size,
         num_recurrent_layers=1,
+        action_shape: Optional[Tuple[int]] = None,
         is_double_buffered: bool = False,
+        discrete_actions: bool = True,
     ):
         super().__init__(
             numsteps,
@@ -153,7 +155,9 @@ class VERRolloutStorage(RolloutStorage):
             action_space,
             recurrent_hidden_state_size,
             num_recurrent_layers,
+            action_shape,
             is_double_buffered,
+            discrete_actions,
         )
         self.use_is_coeffs = variable_experience
 
@@ -569,13 +573,13 @@ class VERRolloutStorage(RolloutStorage):
         self.buffers["returns"].copy_(returns_t, non_blocking=True)
         self.current_rollout_step_idxs[0] = self.num_steps
 
-    def data_generator(
+    def recurrent_generator(
         self,
         advantages: Optional[torch.Tensor],
         num_mini_batch: int,
     ) -> Iterator[DictTree]:
         if not self.variable_experience:
-            yield from super().data_generator(advantages, num_mini_batch)
+            yield from super().recurrent_generator(advantages, num_mini_batch)
         else:
             for mb_inds in generate_ver_mini_batches(
                 num_mini_batch,

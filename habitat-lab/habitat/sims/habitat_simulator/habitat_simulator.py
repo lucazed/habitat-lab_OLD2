@@ -17,7 +17,6 @@ from typing import (
     cast,
 )
 
-import magnum as mn
 import numpy as np
 from gym import spaces
 from gym.spaces.box import Box
@@ -25,10 +24,6 @@ from omegaconf import DictConfig
 
 import habitat_sim
 from habitat.config.default import get_agent_config
-from habitat.core.batch_rendering.env_batch_renderer_constants import (
-    KEYFRAME_OBSERVATION_KEY,
-    KEYFRAME_SENSOR_PREFIX,
-)
 from habitat.core.dataset import Episode
 from habitat.core.registry import registry
 from habitat.core.simulator import (
@@ -148,28 +143,22 @@ class HabitatSimDepthSensor(DepthSensor, HabitatSimSensor):
     max_depth_value: float
 
     def __init__(self, config: DictConfig) -> None:
-        self.min_depth_value = config.min_depth
-        self.max_depth_value = config.max_depth
-        self.normalize_depth = config.normalize_depth
-        if self.normalize_depth:
-            self._obs_shape = spaces.Box(
-                low=0,
-                high=1,
-                shape=(config.height, config.width, 1),
-                dtype=np.float32,
-            )
+        if config.normalize_depth:
+            self.min_depth_value = 0
+            self.max_depth_value = 1
         else:
-            self._obs_shape = spaces.Box(
-                low=self.min_depth_value,
-                high=self.max_depth_value,
-                shape=(config.height, config.width, 1),
-                dtype=np.float32,
-            )
+            self.min_depth_value = config.min_depth
+            self.max_depth_value = config.max_depth
 
         super().__init__(config=config)
 
     def _get_observation_space(self, *args: Any, **kwargs: Any) -> Box:
-        return self._obs_shape
+        return spaces.Box(
+            low=self.min_depth_value,
+            high=self.max_depth_value,
+            shape=(self.config.height, self.config.width, 1),
+            dtype=np.float32,
+        )
 
     def get_observation(
         self, sim_obs: Dict[str, Union[np.ndarray, bool, "Tensor"]]
@@ -177,20 +166,20 @@ class HabitatSimDepthSensor(DepthSensor, HabitatSimSensor):
         obs = cast(Optional[VisualObservation], sim_obs.get(self.uuid, None))
         check_sim_obs(obs, self)
         if isinstance(obs, np.ndarray):
-            obs = np.clip(obs, self.min_depth_value, self.max_depth_value)
+            obs = np.clip(obs, self.config.min_depth, self.config.max_depth)
 
             obs = np.expand_dims(
                 obs, axis=2
             )  # make depth observation a 3D array
         else:
-            obs = obs.clamp(self.min_depth_value, self.max_depth_value)  # type: ignore[attr-defined, unreachable]
+            obs = obs.clamp(self.config.min_depth, self.config.max_depth)  # type: ignore[attr-defined, unreachable]
 
             obs = obs.unsqueeze(-1)  # type: ignore[attr-defined]
 
-        if self.normalize_depth:
+        if self.config.normalize_depth:
             # normalize depth observation to [0, 1]
-            obs = (obs - self.min_depth_value) / (
-                self.max_depth_value - self.min_depth_value
+            obs = (obs - self.config.min_depth) / (
+                self.config.max_depth - self.config.min_depth
             )
 
         return obs
@@ -291,9 +280,6 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
         self._sensor_suite = SensorSuite(sim_sensors)
         self.sim_config = self.create_sim_config(self._sensor_suite)
         self._current_scene = self.sim_config.sim_cfg.scene_id
-        self.sim_config.enable_batch_renderer = (
-            config.renderer.enable_batch_renderer
-        )
         super().__init__(self.sim_config)
         # load additional object paths specified by the dataset
         # TODO: Should this be moved elsewhere?
@@ -321,7 +307,7 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
         overwrite_config(
             config_from=self.habitat_config.habitat_sim_v0,
             config_to=sim_config,
-            # Ignore key as it gets propagated to sensor below
+            # Ignore key as it gets propogated to sensor below
             ignore_keys={"gpu_gpu"},
         )
         sim_config.scene_dataset_config_file = (
@@ -340,12 +326,10 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
                 "sim_sensors",
                 "start_position",
                 "start_rotation",
-                "articulated_agent_urdf",
-                "articulated_agent_type",
+                "robot_urdf",
+                "robot_type",
                 "joint_start_noise",
-                "motion_data_path",
                 "ik_arm_urdf",
-                "grasp_managers",
             },
         )
 
@@ -384,28 +368,9 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
             sensor_specifications.append(sim_sensor_cfg)
 
         agent_config.sensor_specifications = sensor_specifications
-
-        agent_config.action_space = {
-            0: habitat_sim.ActionSpec("stop"),
-            1: habitat_sim.ActionSpec(
-                "move_forward",
-                habitat_sim.ActuationSpec(
-                    amount=self.habitat_config.forward_step_size
-                ),
-            ),
-            2: habitat_sim.ActionSpec(
-                "turn_left",
-                habitat_sim.ActuationSpec(
-                    amount=self.habitat_config.turn_angle
-                ),
-            ),
-            3: habitat_sim.ActionSpec(
-                "turn_right",
-                habitat_sim.ActuationSpec(
-                    amount=self.habitat_config.turn_angle
-                ),
-            ),
-        }
+        agent_config.action_space = registry.get_action_space_configuration(
+            self.habitat_config.action_space_config
+        )(self.habitat_config).get()
 
         return habitat_sim.Configuration(sim_config, [agent_config])
 
@@ -425,8 +390,8 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
             agent_cfg = self.habitat_config.agents[agent_name]
             if agent_cfg.is_set_start_state:
                 self.set_agent_state(
-                    [float(k) for k in agent_cfg.start_position],
-                    [float(k) for k in agent_cfg.start_rotation],
+                    agent_cfg.start_position,
+                    agent_cfg.start_rotation,
                     agent_id,
                 )
                 is_updated = True
@@ -439,25 +404,13 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
             sim_obs = self.get_sensor_observations()
 
         self._prev_sim_obs = sim_obs
-        if self.config.enable_batch_renderer:
-            self.add_keyframe_to_observations(sim_obs)
-            return sim_obs
-        else:
-            return self._sensor_suite.get_observations(sim_obs)
+        return self._sensor_suite.get_observations(sim_obs)
 
-    def step(
-        self, action: Optional[Union[str, np.ndarray, int]]
-    ) -> Observations:
-        if action is None:
-            sim_obs = self.get_sensor_observations()
-        else:
-            sim_obs = super().step(action)
+    def step(self, action: Union[str, np.ndarray, int]) -> Observations:
+        sim_obs = super().step(action)
         self._prev_sim_obs = sim_obs
-        if self.config.enable_batch_renderer:
-            self.add_keyframe_to_observations(sim_obs)
-            return sim_obs
-        else:
-            return self._sensor_suite.get_observations(sim_obs)
+        observations = self._sensor_suite.get_observations(sim_obs)
+        return observations
 
     def render(self, mode: str = "rgb") -> Any:
         r"""
@@ -468,8 +421,6 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
         Returns:
             rendered frame according to the mode
         """
-        assert not self.config.enable_batch_renderer
-
         sim_obs = self.get_sensor_observations()
         observations = self._sensor_suite.get_observations(sim_obs)
 
@@ -485,7 +436,6 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
     def reconfigure(
         self,
         habitat_config: DictConfig,
-        ep_info: Optional[Episode] = None,
         should_close_on_new_scene: bool = True,
     ) -> None:
         # TODO(maksymets): Switch to Habitat-Sim more efficient caching
@@ -630,7 +580,7 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
             original pose and returns false.
         """
         agent = self.get_agent(agent_id)
-        new_state = self.get_agent(agent_id).get_state()
+        new_state = self.get_agent_state(agent_id)
         new_state.position = position
         new_state.rotation = rotation
 
@@ -691,31 +641,9 @@ class HabitatSim(habitat_sim.Simulator, Simulator):
             bool: True if the previous step resulted in a collision, false otherwise
 
         Warning:
-            This field is only updated when :meth:`step`, :meth:`reset`, or :meth:`get_observations_at` are
-            called.  It does not update when the agent is moved to a new location.  Furthermore, it
+            This feild is only updated when :meth:`step`, :meth:`reset`, or :meth:`get_observations_at` are
+            called.  It does not update when the agent is moved to a new loction.  Furthermore, it
             will _always_ be false after :meth:`reset` or :meth:`get_observations_at` as neither of those
             result in an action (step) being taken.
         """
         return self._prev_sim_obs.get("collided", False)
-
-    def add_keyframe_to_observations(self, observations):
-        r"""Adds an item to observations that contains the latest gfx-replay keyframe.
-        This is used to communicate the state of concurrent simulators to the batch renderer between processes.
-
-        :param observations: Original observations upon which the keyframe is added.
-        """
-        assert self.config.enable_batch_renderer
-
-        assert KEYFRAME_OBSERVATION_KEY not in observations
-        for _sensor_uuid, sensor in self._sensors.items():
-            node = sensor._sensor_object.node
-            transform = node.absolute_transformation()
-            rotation = mn.Quaternion.from_matrix(transform.rotation())
-            self.gfx_replay_manager.add_user_transform_to_keyframe(
-                KEYFRAME_SENSOR_PREFIX + _sensor_uuid,
-                transform.translation,
-                rotation,
-            )
-        observations[
-            KEYFRAME_OBSERVATION_KEY
-        ] = self.gfx_replay_manager.extract_keyframe()

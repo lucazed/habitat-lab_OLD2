@@ -20,9 +20,10 @@ This script's intended usage is:
 import os
 
 if __name__ == "__main__":
+
     # The Habitat-lab program to be profiled (the command you usually use to
     # invoke it).
-    program_str = "python -u -m habitat_baselines.run --config-name=pointnav/ddppo_pointnav.yaml"
+    program_str = "python -u -m habitat_baselines.run --exp-config habitat-baselines/habitat_baselines/config/pointnav/ddppo_pointnav.yaml --run-type train"
 
     # Path to Nsight Systems nsys command-line tool. This hard-coded path is
     # for the FAIR cluster.

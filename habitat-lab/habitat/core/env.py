@@ -335,11 +335,14 @@ class Env:
         self._task.seed(seed)
 
     def reconfigure(self, config: "DictConfig") -> None:
-        self._config = self._task.overwrite_sim_config(
-            config, self.current_episode
-        )
+        self._config = config
 
-        self._sim.reconfigure(self._config.simulator, self.current_episode)
+        with read_write(self._config):
+            self._config.simulator = self._task.overwrite_sim_config(
+                self._config.simulator, self.current_episode
+            )
+
+        self._sim.reconfigure(self._config.simulator)
 
     def render(self, mode="rgb") -> np.ndarray:
         return self._sim.render(mode)
@@ -402,12 +405,12 @@ class RLEnv(gym.Env):
         self._env.episodes = episodes
 
     def current_episode(self, all_info: bool = False) -> BaseEpisode:
-        r"""Returns the current episode of the environment.
-
-        :param all_info: If true, all the information in the episode
-                         will be provided. Otherwise, only episode_id
-                         and scene_id will be included.
-        :return: The BaseEpisode object for the current episode.
+        """
+        Returns the current episode of the environment.
+        :param all_info: If true, all of the information in the episode
+        will be provided. Otherwise, only episode_id and scene_id will
+        be included
+        :return: The BaseEpisode object for the current episode
         """
         if all_info:
             return self._env.current_episode
@@ -418,14 +421,8 @@ class RLEnv(gym.Env):
             )
 
     @profiling_wrapper.RangeContext("RLEnv.reset")
-    def reset(
-        self, *, return_info: bool = False, **kwargs
-    ) -> Union[Observations, Tuple[Observations, Dict]]:
-        observations = self._env.reset()
-        if return_info:
-            return observations, self.get_info(observations)
-        else:
-            return observations
+    def reset(self) -> Observations:
+        return self._env.reset()
 
     def get_reward_range(self):
         r"""Get min, max range of reward.

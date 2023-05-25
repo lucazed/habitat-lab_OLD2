@@ -64,6 +64,7 @@ class PACMANTrainer(BaseILTrainer):
         writer: TensorboardWriter,
         video_option: list,
     ) -> None:
+
         r"""For saving NAV-PACMAN eval results.
         Args:
             ckpt_path: path of checkpoint being evaluated
@@ -443,6 +444,7 @@ class PACMANTrainer(BaseILTrainer):
                             )
 
                             for step in range(planner_actions_in.size(0)):
+
                                 (
                                     planner_scores,
                                     planner_hidden,

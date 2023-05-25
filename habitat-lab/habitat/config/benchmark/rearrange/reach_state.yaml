@@ -9,6 +9,7 @@ defaults:
 
 habitat:
   gym:
+    auto_name: ReachState
     obs_keys:
       - joint
       - relative_resting_position

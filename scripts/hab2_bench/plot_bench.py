@@ -50,11 +50,7 @@ def plot(name_map, savename, set_title, base_name):
     plt.xlabel("FPS")
     plt.title(set_title)
     plt.grid(
-        visible=True,
-        which="major",
-        color="lightgray",
-        linestyle="--",
-        axis="x",
+        b=True, which="major", color="lightgray", linestyle="--", axis="x"
     )
     plt.tight_layout()
 

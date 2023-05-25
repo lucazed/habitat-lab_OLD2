@@ -26,7 +26,7 @@ class RearrangePickTaskV1(RearrangeTask):
             config=config,
             *args,
             dataset=dataset,
-            should_place_articulated_agent=False,
+            should_place_robot=False,
             **kwargs,
         )
 
@@ -53,17 +53,18 @@ class RearrangePickTaskV1(RearrangeTask):
     def _gen_start_pos(self, sim, episode, sel_idx):
         target_positions = self._get_targ_pos(sim)
         targ_pos = target_positions[sel_idx]
+        snap_pos = targ_pos
 
-        start_pos, angle_to_obj, was_fail = get_robot_spawns(
-            targ_pos,
+        start_pos, angle_to_obj, was_succ = get_robot_spawns(
+            snap_pos,
             self._config.base_angle_noise,
-            self._config.spawn_max_dist_to_obj,
+            self._config.spawn_max_dists_to_obj,
             sim,
             self._config.num_spawn_attempts,
             self._config.physics_stability_steps,
         )
 
-        if was_fail:
+        if was_succ:
             rearrange_logger.error(
                 f"Episode {episode.episode_id} failed to place robot"
             )
@@ -101,12 +102,12 @@ class RearrangePickTaskV1(RearrangeTask):
         sel_idx = self._sample_idx(sim)
         start_pos, start_rot = self._gen_start_pos(sim, episode, sel_idx)
 
-        sim.articulated_agent.base_pos = start_pos
-        sim.articulated_agent.base_rot = start_rot
+        sim.robot.base_pos = start_pos
+        sim.robot.base_rot = start_rot
 
         self._targ_idx = sel_idx
 
         if fetch_observations:
-            self._sim.maybe_update_articulated_agent()
+            self._sim.maybe_update_robot()
             return self._get_observations(episode)
         return None
