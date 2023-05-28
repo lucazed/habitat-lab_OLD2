@@ -1320,7 +1320,7 @@ class NavigationTask(EmbodiedTask):
         super().__init__(config=config, sim=sim, dataset=dataset)
         # Get the rigid object manager
 
-        data_path = “/content/habitat-sim/data"
+        data_path = "/content/habitat-sim/data"
         self.rigid_obj_mgr = self._sim.get_rigid_object_manager()
         # Load some object templates from configuration files
         obj_templates_mgr = self._sim.get_object_template_manager()
