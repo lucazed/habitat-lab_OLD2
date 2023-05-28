@@ -1318,6 +1318,16 @@ class NavigationTask(EmbodiedTask):
         dataset: Optional[Dataset] = None,
     ) -> None:
         super().__init__(config=config, sim=sim, dataset=dataset)
+        # Get the rigid object manager
+
+        data_path = “/content/habitat-sim/data"
+        self.rigid_obj_mgr = self._sim.get_rigid_object_manager()
+        # Load some object templates from configuration files
+        obj_templates_mgr = self._sim.get_object_template_manager()
+        self.sphere_template_id = obj_templates_mgr.load_configs(
+            str(os.path.join(data_path, "test_assets/objects/sphere"))
+        )[0]
+        self.sphere_obj = None
 
     def overwrite_sim_config(self, sim_config: Any, episode: Episode) -> Any:
         sim_config.scene = episode.scene_id
@@ -1331,6 +1341,17 @@ class NavigationTask(EmbodiedTask):
                 float(k) for k in episode.start_rotation
             ]
             agent_config.is_set_start_state = True
+
+        # Remove the old sphere if it exists
+        if self.sphere_obj is not None:
+            self.rigid_obj_mgr.remove_object_by_id(self.sphere_obj.object_id)
+
+        # Add a new sphere at the goal location
+        self.sphere_obj = self.rigid_obj_mgr.add_object_by_template_id(
+            self.sphere_template_id
+        )
+        self.sphere_obj.translation = episode.goals[0].position
+
         return sim_config
 
     def _check_episode_is_active(self, *args: Any, **kwargs: Any) -> bool:
